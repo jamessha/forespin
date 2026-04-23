@@ -1,0 +1,38 @@
+{
+  "clips": [
+    {
+      "clip_id": "sample-001",
+      "video_path": "clips/sample-001.mp4",
+      "tracked_player_side": "near",
+      "handedness": "right",
+      "court_corners_px": [
+        {"x": 280, "y": 120},
+        {"x": 1000, "y": 120},
+        {"x": 1220, "y": 680},
+        {"x": 60, "y": 680}
+      ],
+      "hit_events": [
+        {"frame": 14, "actor": "tracked", "shot_type": "serve"},
+        {"frame": 39, "actor": "opponent", "shot_type": "unknown"},
+        {"frame": 57, "actor": "tracked", "shot_type": "forehand"}
+      ],
+      "bounce_events": [
+        {"frame": 26, "in_bounds": true},
+        {"frame": 47, "in_bounds": true},
+        {"frame": 70, "in_bounds": false}
+      ],
+      "points": [
+        {
+          "start_frame": 14,
+          "end_frame": 70,
+          "winner": "opponent",
+          "final_loss_zone": {
+            "depth": "baseline",
+            "lateral": "right"
+          }
+        }
+      ]
+    }
+  ]
+}
+

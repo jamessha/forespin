@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Forespin Dev Set",
+  "type": "object",
+  "required": ["clips"],
+  "properties": {
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "clip_id",
+          "video_path",
+          "tracked_player_side",
+          "handedness",
+          "court_corners_px",
+          "hit_events",
+          "bounce_events",
+          "points"
+        ],
+        "properties": {
+          "clip_id": {"type": "string", "minLength": 1},
+          "video_path": {"type": "string", "minLength": 1},
+          "tracked_player_side": {"enum": ["near", "far"]},
+          "handedness": {"enum": ["right", "left"]},
+          "court_corners_px": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "required": ["x", "y"],
+              "properties": {
+                "x": {"type": "number"},
+                "y": {"type": "number"}
+              }
+            }
+          },
+          "hit_events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["frame", "actor", "shot_type"],
+              "properties": {
+                "frame": {"type": "integer", "minimum": 0},
+                "actor": {"enum": ["tracked", "opponent", "unknown"]},
+                "shot_type": {"enum": ["serve", "forehand", "backhand", "volley", "unknown"]}
+              }
+            }
+          },
+          "bounce_events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["frame", "in_bounds"],
+              "properties": {
+                "frame": {"type": "integer", "minimum": 0},
+                "in_bounds": {"type": "boolean"}
+              }
+            }
+          },
+          "points": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["start_frame", "end_frame", "winner", "final_loss_zone"],
+              "properties": {
+                "start_frame": {"type": "integer", "minimum": 0},
+                "end_frame": {"type": "integer", "minimum": 0},
+                "winner": {"enum": ["tracked", "opponent"]},
+                "final_loss_zone": {
+                  "type": "object",
+                  "required": ["depth", "lateral"],
+                  "properties": {
+                    "depth": {"enum": ["baseline", "net", "other"]},
+                    "lateral": {"enum": ["left", "right"]}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+

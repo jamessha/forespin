@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forespin"
+version = "0.1.0"
+description = "Baseline-view tennis video analyzer for single-player shot and location metrics."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = []
+
+[project.optional-dependencies]
+vision = [
+  "huggingface_hub>=0.32",
+  "numpy>=1.26",
+  "opencv-python>=4.10",
+  "torch>=2.3",
+  "ultralytics>=8.2",
+]
+ui = [
+  "streamlit>=1.35",
+]
+all = [
+  "huggingface_hub>=0.32",
+  "numpy>=1.26",
+  "opencv-python>=4.10",
+  "torch>=2.3",
+  "ultralytics>=8.2",
+  "streamlit>=1.35",
+]
+
+[project.scripts]
+forespin = "forespin.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
