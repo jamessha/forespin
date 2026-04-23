@@ -69,6 +69,18 @@ python tennis_court_detector/main.py
 
 Training uses `calib_model_data/courtside_data` by default and writes experiments under `tennis_court_detector/exps/`.
 
+Training writes `model_last.pt` and `model_best.pt` for inference compatibility, plus full `checkpoint_last.pt` and `checkpoint_best.pt` files that include model state, optimizer state, epoch, and best validation accuracy. Resume the latest checkpoint for an experiment with:
+
+```bash
+python tennis_court_detector/main.py --exp_id default --resume
+```
+
+To resume a specific checkpoint:
+
+```bash
+python tennis_court_detector/main.py --resume tennis_court_detector/exps/default/checkpoint_last.pt
+```
+
 The training scripts have been updated for modern PyTorch. Device selection defaults to `auto`, which prefers CUDA, then Apple MPS, then CPU. To force a device, pass `--device cpu`, `--device cuda`, or `--device mps`.
 
 ## Infer in video 

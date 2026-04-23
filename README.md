@@ -145,3 +145,24 @@ Train the vendored court detector on the generated courtside data:
 python3 -m pip install -r tennis_court_detector/requirements.txt
 python3 tennis_court_detector/main.py
 ```
+
+Training writes both inference weights and resumable checkpoints under the experiment directory. For example:
+
+```text
+tennis_court_detector/exps/default/model_last.pt
+tennis_court_detector/exps/default/model_best.pt
+tennis_court_detector/exps/default/checkpoint_last.pt
+tennis_court_detector/exps/default/checkpoint_best.pt
+```
+
+Resume the latest checkpoint for an experiment:
+
+```bash
+python3 tennis_court_detector/main.py --exp_id default --resume
+```
+
+Or resume a specific checkpoint:
+
+```bash
+python3 tennis_court_detector/main.py --resume tennis_court_detector/exps/default/checkpoint_last.pt
+```
