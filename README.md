@@ -139,6 +139,15 @@ Render label overlays for inspection:
 python3 scripts/visualize_court_labels.py --data-root calib_model_data/courtside_data --max-images 100
 ```
 
+Run learned court calibration inference on a single image:
+
+```bash
+python3 scripts/infer_court_calibration.py /path/to/baseline-view-frame.jpg \
+  --output-dir outputs/court_calibration_debug
+```
+
+The script auto-discovers the court checkpoint in `models/court/` unless `--weights` is provided. It writes a raw image copy, an overlay image, `summary.json`, and `calibration.json` when the image is accepted.
+
 Train the vendored court detector on the generated courtside data:
 
 ```bash
