@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from forespin.court import CourtCalibrator, LearnedCourtCalibratorBackend
 from forespin.deps import require_vision_stack
 from forespin.domain import CourtCalibration, Point2D
 from forespin.model_weights import DEFAULT_COURT_WEIGHTS_DIR, DEFAULT_COURT_WEIGHTS_PATH, discover_default_local_artifact
+from forespin.net_removal import DEFAULT_NET_REMOVAL_MODEL, OpenAINetRemovalPreprocessor
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
@@ -38,9 +40,20 @@ def main(argv: list[str] | None = None) -> int:
         weights_path=str(weights_path),
         plausibility_check=CourtCalibrator._corners_plausible_for_baseline_view,
     )
+    frame_preprocessor = (
+        OpenAINetRemovalPreprocessor(model=args.net_removal_model)
+        if args.remove_net_with_openai
+        else None
+    )
     cv2, _ = require_vision_stack()
 
-    result = infer_image(input_path=input_path, output_dir=output_dir, backend=backend, cv2=cv2)
+    result = infer_image(
+        input_path=input_path,
+        output_dir=output_dir,
+        backend=backend,
+        cv2=cv2,
+        frame_preprocessor=frame_preprocessor,
+    )
     payload = {
         "input_path": str(input_path),
         "weights_path": str(weights_path),
@@ -75,6 +88,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output-dir", default="outputs/court_calibration", help="Directory for overlays and JSON outputs.")
     parser.add_argument(
+        "--remove-net-with-openai",
+        action="store_true",
+        help="Use OpenAI image editing to remove the net before court calibration. Requires OPENAI_API_KEY.",
+    )
+    parser.add_argument(
+        "--net-removal-model",
+        default=DEFAULT_NET_REMOVAL_MODEL,
+        help=f"OpenAI image model for --remove-net-with-openai. Defaults to {DEFAULT_NET_REMOVAL_MODEL}.",
+    )
+    parser.add_argument(
         "--min-court-confidence",
         type=float,
         default=Thresholds().min_court_confidence,
@@ -105,10 +128,13 @@ def infer_image(
     output_dir: Path,
     backend: LearnedCourtCalibratorBackend,
     cv2: Any,
+    frame_preprocessor: OpenAINetRemovalPreprocessor | None = None,
 ) -> dict[str, Any]:
     frame = cv2.imread(str(input_path), cv2.IMREAD_COLOR)
     if frame is None:
         raise ValueError(f"Unable to read image: {input_path}")
+    if frame_preprocessor is not None:
+        frame = frame_preprocessor.preprocess_frame(frame, debug_dir=output_dir, frame_index=0)
     return evaluate_and_write(
         frame=frame,
         frame_index=0,
@@ -128,6 +154,7 @@ def evaluate_and_write(
 ) -> dict[str, Any]:
     evaluation = backend.evaluate_frame(frame)
     backend.write_debug_artifacts(output_dir, frame_index, frame, evaluation)
+    diagnostics = describe_evaluation(evaluation, frame_width=frame.shape[1], frame_height=frame.shape[0])
     return {
         "frame_index": frame_index,
         "source": source,
@@ -135,8 +162,109 @@ def evaluate_and_write(
         "raw_image": str(output_dir / f"frame_{frame_index:03d}_raw.jpg"),
         "overlay_image": str(output_dir / f"frame_{frame_index:03d}_overlay.jpg"),
         "summary": evaluation["summary"],
+        "diagnostics": diagnostics,
         "calibration": calibration_payload(evaluation["calibration"]),
         "reference_to_image": evaluation["reference_to_image"],
+    }
+
+
+def describe_evaluation(evaluation: dict[str, Any], *, frame_width: int, frame_height: int) -> dict[str, Any]:
+    summary = evaluation["summary"]
+    visible_keypoints = int(summary.get("visible_keypoints") or 0)
+    confidences = [float(keypoint["confidence"]) for keypoint in summary.get("keypoints", [])]
+    low_confidence_keypoints = [
+        {
+            "index": keypoint["index"],
+            "confidence": keypoint["confidence"],
+        }
+        for keypoint in summary.get("keypoints", [])
+        if not keypoint.get("visible")
+    ]
+    diagnostics: dict[str, Any] = {
+        "reason": summary.get("reason"),
+        "description": build_reason_description(summary, frame_width=frame_width, frame_height=frame_height),
+        "visible_keypoints": visible_keypoints,
+        "required_visible_keypoints": LearnedCourtCalibratorBackend.MIN_VISIBLE_KEYPOINTS,
+        "mean_visible_keypoint_confidence": summary.get("mean_visible_keypoint_confidence"),
+        "minimum_peak_confidence": LearnedCourtCalibratorBackend.MIN_PEAK_CONFIDENCE,
+        "low_confidence_keypoints": low_confidence_keypoints,
+        "reprojection_error_px": summary.get("reprojection_error_px"),
+        "confidence": summary.get("confidence"),
+    }
+    if confidences:
+        diagnostics["keypoint_confidence_range"] = {
+            "min": min(confidences),
+            "max": max(confidences),
+        }
+
+    corners = summary.get("corners") or []
+    if len(corners) == 4 and all(corner is not None for corner in corners):
+        diagnostics["corner_plausibility"] = describe_corner_plausibility(corners, frame_width=frame_width, frame_height=frame_height)
+    return diagnostics
+
+
+def build_reason_description(summary: dict[str, Any], *, frame_width: int, frame_height: int) -> str:
+    reason = str(summary.get("reason") or "unknown")
+    visible_keypoints = int(summary.get("visible_keypoints") or 0)
+    if reason == "accepted":
+        return "Calibration accepted."
+    if reason == "The learned calibrator did not find enough court keypoints.":
+        return (
+            f"Only {visible_keypoints} court keypoints exceeded the peak-confidence threshold "
+            f"of {LearnedCourtCalibratorBackend.MIN_PEAK_CONFIDENCE:.2f}; "
+            f"at least {LearnedCourtCalibratorBackend.MIN_VISIBLE_KEYPOINTS} are required to fit a homography."
+        )
+    if reason == "Unable to fit a court homography from the detected keypoints.":
+        return (
+            "Enough keypoints were detected, but they did not match any valid court keypoint configuration "
+            "needed to estimate the reference-to-image homography."
+        )
+    if reason == "The learned homography could not reconstruct the outer court corners.":
+        return "A homography was found, but projecting the canonical outer court corners failed."
+    if reason == "The reconstructed court corners were implausible for a baseline-view court.":
+        return (
+            "The model produced a homography, but the projected outer court failed baseline-view geometry checks. "
+            f"For this {frame_width}x{frame_height} image, see corner_plausibility for the exact failed bounds."
+        )
+    if reason == "The learned court calibration confidence fell below the acceptance threshold.":
+        confidence = float(summary.get("confidence") or 0.0)
+        return (
+            f"The geometry was plausible, but combined confidence was {confidence:.3f}, below the configured "
+            "minimum. Confidence combines visible keypoint ratio, mean keypoint confidence, and homography consistency."
+        )
+    if reason == "The learned court homography was numerically unstable.":
+        return "The homography matrix could not be inverted reliably, so image-to-court coordinates would be unstable."
+    return reason
+
+
+def describe_corner_plausibility(corners: list[dict[str, float]], *, frame_width: int, frame_height: int) -> dict[str, Any]:
+    top_a, top_b, bottom_b, bottom_a = corners
+    x_min = -frame_width * 4.0
+    x_max = frame_width * 5.0
+    y_min = -frame_height * 4.0
+    y_max = frame_height * 5.0
+
+    checks = {
+        "finite_coordinates": all(math.isfinite(corner["x"]) and math.isfinite(corner["y"]) for corner in corners),
+        "corners_within_loose_x_bounds": all(x_min <= corner["x"] <= x_max for corner in corners),
+        "corners_within_loose_y_bounds": all(y_min <= corner["y"] <= y_max for corner in corners),
+    }
+    return {
+        "passed": all(checks.values()),
+        "failed_checks": [name for name, passed in checks.items() if not passed],
+        "checks": checks,
+        "measurements": {
+            "top_edge_delta_x_px": top_b["x"] - top_a["x"],
+            "bottom_edge_delta_x_px": bottom_b["x"] - bottom_a["x"],
+            "reference_side_a_delta_y_px": bottom_a["y"] - top_a["y"],
+            "reference_side_b_delta_y_px": bottom_b["y"] - top_b["y"],
+        },
+        "bounds": {
+            "x_min": x_min,
+            "x_max": x_max,
+            "y_min": y_min,
+            "y_max": y_max,
+        },
     }
 
 

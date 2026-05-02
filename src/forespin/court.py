@@ -29,9 +29,20 @@ class CourtCalibrationBackend(Protocol):
         ...
 
 
+class CourtFramePreprocessor(Protocol):
+    def preprocess_frame(self, frame: Any, *, debug_dir: Path | None = None, frame_index: int = 0) -> Any:
+        ...
+
+
 class CourtCalibrator:
-    def __init__(self, thresholds: Thresholds, weights_path: str | None = None) -> None:
+    def __init__(
+        self,
+        thresholds: Thresholds,
+        weights_path: str | None = None,
+        frame_preprocessor: CourtFramePreprocessor | None = None,
+    ) -> None:
         self.thresholds = thresholds
+        self.frame_preprocessor = frame_preprocessor
         if weights_path:
             self.backend: CourtCalibrationBackend = LearnedCourtCalibratorBackend(
                 thresholds=thresholds,
@@ -62,6 +73,12 @@ class CourtCalibrator:
                 ok, frame = capture.read()
                 if not ok:
                     break
+                if self.frame_preprocessor is not None:
+                    frame = self.frame_preprocessor.preprocess_frame(
+                        frame,
+                        debug_dir=debug_path,
+                        frame_index=scanned,
+                    )
                 evaluation = self.backend.evaluate_frame(frame)
                 if debug_path is not None:
                     self.backend.write_debug_artifacts(debug_path, scanned, frame, evaluation)
@@ -123,43 +140,18 @@ class CourtCalibrator:
         if len(corners) != 4:
             return False
 
-        top_left, top_right, bottom_right, bottom_left = corners
-        if not (top_left.x < top_right.x and bottom_left.x < bottom_right.x):
+        if not all(math.isfinite(corner.x) and math.isfinite(corner.y) for corner in corners):
             return False
 
-        top_y_limit_low = -height * 0.35
-        top_y_limit_high = height * 0.75
-        bottom_y_limit_low = height * 0.20
-        bottom_y_limit_high = height * 2.75
-        wide_left_limit = -width * 1.75
-        wide_right_limit = width * 2.75
-
-        top_corners = (top_left, top_right)
-        bottom_corners = (bottom_left, bottom_right)
-
-        for corner in top_corners:
-            if corner.x < wide_left_limit or corner.x > wide_right_limit:
+        x_limit_low = -width * 4.0
+        x_limit_high = width * 5.0
+        y_limit_low = -height * 4.0
+        y_limit_high = height * 5.0
+        for corner in corners:
+            if corner.x < x_limit_low or corner.x > x_limit_high:
                 return False
-            if corner.y < top_y_limit_low or corner.y > top_y_limit_high:
+            if corner.y < y_limit_low or corner.y > y_limit_high:
                 return False
-
-        for corner in bottom_corners:
-            if corner.x < wide_left_limit or corner.x > wide_right_limit:
-                return False
-            if corner.y < bottom_y_limit_low or corner.y > bottom_y_limit_high:
-                return False
-
-        top_width = top_right.x - top_left.x
-        bottom_width = bottom_right.x - bottom_left.x
-        left_height = bottom_left.y - top_left.y
-        right_height = bottom_right.y - top_right.y
-
-        if top_width <= width * 0.10:
-            return False
-        if bottom_width <= top_width * 0.80:
-            return False
-        if left_height <= height * 0.15 or right_height <= height * 0.15:
-            return False
 
         return True
 

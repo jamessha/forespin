@@ -33,13 +33,45 @@ class CourtCalibrationTests(unittest.TestCase):
 
     def test_implausible_corners_are_rejected(self) -> None:
         corners = [
-            Point2D(-3200.0, 100.0),
+            Point2D(-6200.0, 100.0),
             Point2D(400.0, 100.0),
             Point2D(500.0, 140.0),
-            Point2D(-3300.0, 140.0),
+            Point2D(-6300.0, 140.0),
         ]
 
         self.assertFalse(
+            CourtCalibrator(Thresholds())._corners_plausible_for_baseline_view(
+                corners,
+                width=1280,
+                height=720,
+            )
+        )
+
+    def test_relative_width_and_vertical_span_do_not_reject_unknown_tilt(self) -> None:
+        corners = [
+            Point2D(200.0, -1200.0),
+            Point2D(220.0, -1190.0),
+            Point2D(820.0, 2000.0),
+            Point2D(-700.0, 2010.0),
+        ]
+
+        self.assertTrue(
+            CourtCalibrator(Thresholds())._corners_plausible_for_baseline_view(
+                corners,
+                width=1280,
+                height=720,
+            )
+        )
+
+    def test_horizontal_flip_does_not_reject_reference_corner_order(self) -> None:
+        corners = [
+            Point2D(980.0, 120.0),
+            Point2D(320.0, 120.0),
+            Point2D(-260.0, 840.0),
+            Point2D(1480.0, 840.0),
+        ]
+
+        self.assertTrue(
             CourtCalibrator(Thresholds())._corners_plausible_for_baseline_view(
                 corners,
                 width=1280,

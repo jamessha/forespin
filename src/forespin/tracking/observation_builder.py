@@ -8,6 +8,7 @@ from forespin.deps import require_vision_stack
 from forespin.domain import FrameObservation, InputConfig, Point2D, VideoMetadata
 from forespin.geometry import average, scale, transform_point
 from forespin.model_weights import resolve_model_weights
+from forespin.net_removal import OpenAINetRemovalPreprocessor
 from forespin.tracking.ball import create_ball_tracker
 from forespin.tracking.player import create_player_tracker
 
@@ -35,10 +36,23 @@ def build_observations(
         duration_s=(frame_count / fps) if fps else 0.0,
     )
 
-    calibrator = CourtCalibrator(options.thresholds, weights_path=resolved_weights.court_weights)
+    frame_preprocessor = (
+        OpenAINetRemovalPreprocessor(model=options.net_removal_model)
+        if options.remove_net_for_court_calibration
+        else None
+    )
+    calibrator = CourtCalibrator(
+        options.thresholds,
+        weights_path=resolved_weights.court_weights,
+        frame_preprocessor=frame_preprocessor,
+    )
     analysis_output_dir = Path(input_config.output_dir or "outputs") / video_path.stem
     court_debug_dir = analysis_output_dir / "debug" / "court_calibration"
-    court = calibrator.calibrate_video(video_path, debug_dir=court_debug_dir)
+    court = calibrator.calibrate_video(
+        video_path,
+        max_scan_frames=1 if frame_preprocessor is not None else 30,
+        debug_dir=court_debug_dir,
+    )
     ball_tracker = create_ball_tracker(resolved_weights.tracknet_weights)
     player_tracker = create_player_tracker(input_config.tracked_player_side, resolved_weights.player_pose_weights)
 

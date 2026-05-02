@@ -85,6 +85,18 @@ forespin analyze /path/to/match.mp4 \
   --output-dir outputs/session-001
 ```
 
+For real baseline footage where the net occludes court lines, you can run a first-frame net-removal pass before learned court calibration:
+
+```bash
+forespin analyze /path/to/match.mp4 \
+  --player-side near \
+  --handedness right \
+  --remove-net-for-court-calibration \
+  --output-dir outputs/session-001
+```
+
+This uses OpenAI image editing with `gpt-image-2`, loads `.env` via `python-dotenv`, and expects `OPENAI_API_KEY` to be available. The API call is opt-in because it sends the first video frame to OpenAI and adds cost/latency.
+
 ## Streamlit Usage
 
 ```bash
@@ -147,6 +159,14 @@ python3 scripts/infer_court_calibration.py /path/to/baseline-view-frame.jpg \
 ```
 
 The script auto-discovers the court checkpoint in `models/court/` unless `--weights` is provided. It writes a raw image copy, an overlay image, `summary.json`, and `calibration.json` when the image is accepted.
+
+To test OpenAI net removal on a single frame before calibration:
+
+```bash
+python3 scripts/infer_court_calibration.py /path/to/baseline-view-frame.jpg \
+  --remove-net-with-openai \
+  --output-dir outputs/court_calibration_debug
+```
 
 Train the vendored court detector on the generated courtside data:
 

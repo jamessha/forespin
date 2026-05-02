@@ -15,6 +15,8 @@ vision = [
   "huggingface_hub>=0.32",
   "numpy>=1.26",
   "opencv-python>=4.10",
+  "openai>=1.99",
+  "python-dotenv>=1.0",
   "torch>=2.3",
   "ultralytics>=8.2",
 ]
@@ -25,6 +27,8 @@ all = [
   "huggingface_hub>=0.32",
   "numpy>=1.26",
   "opencv-python>=4.10",
+  "openai>=1.99",
+  "python-dotenv>=1.0",
   "torch>=2.3",
   "ultralytics>=8.2",
   "streamlit>=1.35",

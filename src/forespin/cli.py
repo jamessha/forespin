@@ -55,6 +55,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument("--skip-overlay", action="store_true", help="Do not render the overlay MP4.")
     analyze.add_argument("--allow-low-quality", action="store_true", help="Persist metrics even when the quality gate rejects the clip.")
+    analyze.add_argument(
+        "--remove-net-for-court-calibration",
+        action="store_true",
+        help=(
+            "Use OpenAI image editing to remove the net from the first frame before court calibration. "
+            "Requires OPENAI_API_KEY in the environment or a .env file."
+        ),
+    )
+    analyze.add_argument(
+        "--net-removal-model",
+        default="gpt-image-2",
+        help="OpenAI image model for --remove-net-for-court-calibration. Defaults to gpt-image-2.",
+    )
 
     download = subparsers.add_parser("download", help="Download supported model weights into the repo.")
     download.add_argument("artifact", choices=["yolo"], help="The model artifact to download.")
@@ -90,6 +103,8 @@ def main(argv: list[str] | None = None) -> int:
         render_overlay=not args.skip_overlay,
         persist_overlay=not args.skip_overlay,
         reject_low_quality=not args.allow_low_quality,
+        remove_net_for_court_calibration=args.remove_net_for_court_calibration,
+        net_removal_model=args.net_removal_model,
     )
     input_config = InputConfig(
         video_path=str(Path(args.video_path).expanduser().resolve()),

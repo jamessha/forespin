@@ -58,6 +58,12 @@ def main() -> None:
         f"{'found' if has_default_court_weights() else 'not found'}."
     )
     allow_low_quality = st.checkbox("Persist low-confidence results", value=False)
+    remove_net_for_court_calibration = st.checkbox(
+        "Remove net from first frame before court calibration with OpenAI",
+        value=False,
+    )
+    if remove_net_for_court_calibration:
+        st.caption("Requires `OPENAI_API_KEY` in the environment or a local `.env` file.")
 
     if uploaded is None:
         st.info("Upload a fixed elevated-baseline clip to begin.")
@@ -97,7 +103,10 @@ def main() -> None:
                     player_pose_weights=player_pose_weights.strip() or None,
                     court_weights=court_weights.strip() or None,
                 )
-                options = AnalysisOptions(reject_low_quality=not allow_low_quality)
+                options = AnalysisOptions(
+                    reject_low_quality=not allow_low_quality,
+                    remove_net_for_court_calibration=remove_net_for_court_calibration,
+                )
                 result = TennisAnalyzer(options=options).analyze_and_persist(input_config)
         except MissingDependencyError as exc:
             st.error(str(exc))

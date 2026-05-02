@@ -36,5 +36,6 @@ class AnalysisOptions:
     reject_low_quality: bool = True
     persist_json: bool = True
     persist_overlay: bool = True
+    remove_net_for_court_calibration: bool = False
+    net_removal_model: str = "gpt-image-2"
     thresholds: Thresholds = field(default_factory=Thresholds)
-
