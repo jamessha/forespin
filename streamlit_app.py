@@ -38,7 +38,7 @@ def main() -> None:
     player_side = st.selectbox("Tracked player side", [item.value for item in TrackedPlayerSide], index=0)
     handedness = st.selectbox("Handedness", [item.value for item in Handedness], index=0)
     st.subheader("TrackNetV2 Ball Model")
-    tracknet_weights = st.text_input("Local TrackNetV2 TorchScript path (optional)")
+    tracknet_weights = st.text_input("Local TrackNetV2 state-dict or TorchScript path (optional)")
     st.caption(
         f"If left blank, the app will look for {DEFAULT_TRACKNET_WEIGHTS_PATH}. "
         f"Current status: {'found' if has_default_tracknet_weights() else 'not found'}."
@@ -64,6 +64,7 @@ def main() -> None:
     )
     if remove_net_for_court_calibration:
         st.caption("Requires `OPENAI_API_KEY` in the environment or a local `.env` file.")
+    use_court_calibration_cache = st.checkbox("Reuse cached court calibration", value=True)
 
     if uploaded is None:
         st.info("Upload a fixed elevated-baseline clip to begin.")
@@ -106,6 +107,7 @@ def main() -> None:
                 options = AnalysisOptions(
                     reject_low_quality=not allow_low_quality,
                     remove_net_for_court_calibration=remove_net_for_court_calibration,
+                    use_court_calibration_cache=use_court_calibration_cache,
                 )
                 result = TennisAnalyzer(options=options).analyze_and_persist(input_config)
         except MissingDependencyError as exc:

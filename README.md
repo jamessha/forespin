@@ -19,7 +19,7 @@
 ## What Is Not Bundled
 
 - Model weights are not checked into the repo.
-- `TrackNetV2` weights are local/manual only. Place `tracknetv2.torchscript.pt` in `models/tracknet/`, or provide a local TorchScript-exported heatmap model path.
+- `TrackNetV2` weights are local/manual only. Place the yastrebksv/TrackNet state-dict checkpoint or a TorchScript-exported model in `models/tracknet/`, or provide a local path with `--tracknet-weights`.
 - The learned court detector is also local/manual only. Place a checkpoint in `models/court/`, or provide a local path with `--court-weights`.
 - The player tracker now targets `YOLO26-pose`, not `YOLOv8-pose`.
 - The player model is local at analysis time. Use `forespin download yolo` to fetch the default `yolo26n-pose.pt` into `models/yolo26/`, or pass a local path with `--player-pose-weights`.
@@ -38,7 +38,7 @@ python3 -m pip install -e .
 
 ## CLI Usage
 
-Place your TrackNet weights here if you do not want to pass a flag:
+Place your TrackNet weights here if you do not want to pass a flag. The app accepts the yastrebksv/TrackNet state-dict checkpoint as well as TorchScript-exported TrackNet models:
 
 ```text
 models/tracknet/tracknetv2.torchscript.pt
@@ -96,6 +96,14 @@ forespin analyze /path/to/match.mp4 \
 ```
 
 This uses OpenAI image editing with `gpt-image-2`, loads `.env` via `python-dotenv`, and expects `OPENAI_API_KEY` to be available. The API call is opt-in because it sends the first video frame to OpenAI and adds cost/latency.
+
+Court calibration is cached per input filename and calibration mode under:
+
+```text
+outputs/<video-stem>/cache/court_calibration/
+```
+
+Use `--no-court-cache` to force recalibration while testing.
 
 ## Streamlit Usage
 

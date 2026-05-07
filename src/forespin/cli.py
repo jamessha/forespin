@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     analyze.add_argument(
         "--tracknet-weights",
         help=(
-            "Path to a local TorchScript-exported TrackNetV2 weights file. "
+            "Path to a local TrackNetV2 state-dict or TorchScript weights file. "
             f"If omitted, the app will look for {DEFAULT_TRACKNET_WEIGHTS_PATH}."
         ),
     )
@@ -67,6 +67,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--net-removal-model",
         default="gpt-image-2",
         help="OpenAI image model for --remove-net-for-court-calibration. Defaults to gpt-image-2.",
+    )
+    analyze.add_argument(
+        "--no-court-cache",
+        action="store_true",
+        help="Ignore and overwrite the per-video cached court calibration.",
     )
 
     download = subparsers.add_parser("download", help="Download supported model weights into the repo.")
@@ -105,6 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         reject_low_quality=not args.allow_low_quality,
         remove_net_for_court_calibration=args.remove_net_for_court_calibration,
         net_removal_model=args.net_removal_model,
+        use_court_calibration_cache=not args.no_court_cache,
     )
     input_config = InputConfig(
         video_path=str(Path(args.video_path).expanduser().resolve()),
