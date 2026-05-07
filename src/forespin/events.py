@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from bisect import bisect_left, bisect_right
+from dataclasses import dataclass
 
 from forespin.config import Thresholds
 from forespin.domain import (
@@ -26,6 +27,16 @@ from forespin.geometry import (
     point_on_opponent_side,
     subtract,
 )
+
+
+@dataclass(slots=True)
+class _BounceCandidate:
+    frame_index: int
+    timestamp_s: float
+    ball_court: Point2D | None
+    in_bounds: bool
+    confidence: float
+    score: float
 
 
 def detect_hits(
@@ -80,41 +91,21 @@ def detect_bounces(
     thresholds: Thresholds,
 ) -> list[BounceEvent]:
     hit_frames = {hit.frame_index for hit in hits}
-    bounces: list[BounceEvent] = []
-    for index in range(1, len(observations) - 1):
-        previous = observations[index - 1]
-        current = observations[index]
-        following = observations[index + 1]
-        if not _has_ball_triplet(previous, current, following):
-            continue
-        if any(abs(current.frame_index - hit_frame) <= thresholds.bounce_suppress_frames_after_hit for hit_frame in hit_frames):
-            continue
-
-        v1 = subtract(current.ball_px, previous.ball_px)
-        v2 = subtract(following.ball_px, current.ball_px)
-        angle_change = angle_change_degrees(v1, v2)
-        speed1 = magnitude(v1)
-        speed2 = magnitude(v2)
-        if speed1 <= 1e-6:
-            continue
-        speed_ratio = speed2 / speed1
-        if angle_change < thresholds.bounce_angle_change_deg and speed_ratio > thresholds.bounce_speed_drop_ratio:
-            continue
-
-        if bounces and current.frame_index - bounces[-1].frame_index <= thresholds.hit_suppress_window_frames:
-            continue
-
-        in_bounds = point_in_court(current.ball_court, tolerance=0.03)
-        confidence = min(1.0, current.ball_confidence + (angle_change / 45.0) * 0.5 + max(0.0, 1.0 - speed_ratio) * 0.5)
-        bounces.append(
-            BounceEvent(
-                frame_index=current.frame_index,
-                timestamp_s=current.timestamp_s,
-                ball_court=current.ball_court,
-                in_bounds=in_bounds,
-                confidence=confidence,
-            )
+    candidates = [
+        candidate
+        for index in range(len(observations))
+        if (candidate := _score_floor_bounce_candidate(index, observations, hit_frames, thresholds)) is not None
+    ]
+    bounces = [
+        BounceEvent(
+            frame_index=candidate.frame_index,
+            timestamp_s=candidate.timestamp_s,
+            ball_court=candidate.ball_court,
+            in_bounds=candidate.in_bounds,
+            confidence=candidate.confidence,
         )
+        for candidate in _select_bounce_candidates(candidates, thresholds)
+    ]
 
     return _inject_fallback_bounces(observations, hits, bounces, input_config, thresholds)
 
@@ -226,38 +217,148 @@ def _inject_fallback_bounces(
         if exit_index is None:
             continue
         window_start = max(hit.frame_index + 1, exit_index - thresholds.fallback_bounce_window_frames)
-        best_index = None
-        best_score = -1.0
+        best_candidate = None
         for frame_index in range(window_start + 1, exit_index):
-            prev_obs = observations[frame_index - 1]
-            curr_obs = observations[frame_index]
-            next_obs = observations[frame_index + 1]
-            if not _has_ball_triplet(prev_obs, curr_obs, next_obs):
-                continue
-            v1 = subtract(curr_obs.ball_px, prev_obs.ball_px)
-            v2 = subtract(next_obs.ball_px, curr_obs.ball_px)
-            score = angle_change_degrees(v1, v2) + (magnitude(subtract(v2, v1)) * 0.05)
-            if score > best_score:
-                best_score = score
-                best_index = frame_index
-        if best_index is None or best_index in existing_frames:
+            candidate = _score_floor_bounce_candidate(frame_index, observations, {hit.frame_index}, thresholds)
+            if candidate is not None and (best_candidate is None or candidate.score > best_candidate.score):
+                best_candidate = candidate
+        if best_candidate is None or best_candidate.frame_index in existing_frames:
             continue
-        observation = observations[best_index]
         bounces.append(
             BounceEvent(
-                frame_index=observation.frame_index,
-                timestamp_s=observation.timestamp_s,
-                ball_court=observation.ball_court,
-                in_bounds=point_in_court(observation.ball_court, tolerance=0.03)
-                and point_on_opponent_side(observation.ball_court, input_config.tracked_player_side),
-                confidence=min(0.7, observation.ball_confidence + 0.2),
+                frame_index=best_candidate.frame_index,
+                timestamp_s=best_candidate.timestamp_s,
+                ball_court=best_candidate.ball_court,
+                in_bounds=best_candidate.in_bounds and point_on_opponent_side(best_candidate.ball_court, input_config.tracked_player_side),
+                confidence=min(0.7, best_candidate.confidence),
                 inferred_from_fallback=True,
             )
         )
-        existing_frames.add(best_index)
+        existing_frames.add(best_candidate.frame_index)
 
     bounces.sort(key=lambda bounce: bounce.frame_index)
     return bounces
+
+
+def _score_floor_bounce_candidate(
+    index: int,
+    observations: list[FrameObservation],
+    hit_frames: set[int],
+    thresholds: Thresholds,
+) -> _BounceCandidate | None:
+    current = observations[index]
+    if current.ball_px is None or current.ball_confidence < thresholds.min_ball_confidence:
+        return None
+    if _looks_like_tracked_player_contact(current, thresholds):
+        return None
+    if current.ball_court is not None and not point_in_court(current.ball_court, tolerance=thresholds.bounce_court_margin):
+        return None
+    if any(abs(current.frame_index - hit_frame) <= thresholds.bounce_suppress_frames_after_hit for hit_frame in hit_frames):
+        return None
+
+    previous = _nearest_ball_observation(observations, index - 1, -1, -1, thresholds.bounce_floor_window_frames)
+    following = _nearest_ball_observation(observations, index + 1, len(observations), 1, thresholds.bounce_floor_window_frames)
+    if previous is None or following is None or previous.ball_px is None or following.ball_px is None:
+        return None
+
+    left_neighbors = _ball_neighbors(observations, index, -1, thresholds.bounce_floor_window_frames)
+    right_neighbors = _ball_neighbors(observations, index, 1, thresholds.bounce_floor_window_frames)
+    if not left_neighbors or not right_neighbors:
+        return None
+
+    current_y = current.ball_px.y
+    if current_y < max(observation.ball_px.y for observation in left_neighbors if observation.ball_px is not None):
+        return None
+    if current_y < max(observation.ball_px.y for observation in right_neighbors if observation.ball_px is not None):
+        return None
+
+    left_lowest_approach_y = min(observation.ball_px.y for observation in left_neighbors if observation.ball_px is not None)
+    right_lowest_exit_y = min(observation.ball_px.y for observation in right_neighbors if observation.ball_px is not None)
+    vertical_prominence = current_y - max(left_lowest_approach_y, right_lowest_exit_y)
+    if vertical_prominence < thresholds.bounce_min_vertical_prominence_px:
+        return None
+
+    v1 = subtract(current.ball_px, previous.ball_px)
+    v2 = subtract(following.ball_px, current.ball_px)
+    if v1.y < 0.0 or v2.y > 0.0:
+        return None
+
+    angle_change = angle_change_degrees(v1, v2)
+    speed1 = magnitude(v1)
+    speed2 = magnitude(v2)
+    if speed1 <= 1e-6:
+        return None
+    speed_ratio = speed2 / speed1
+    if angle_change < thresholds.bounce_angle_change_deg and speed_ratio > thresholds.bounce_speed_drop_ratio:
+        return None
+
+    in_bounds = point_in_court(current.ball_court, tolerance=0.03)
+    score = vertical_prominence + (angle_change * 0.35) + (max(0.0, 1.0 - speed_ratio) * 20.0) + (current.ball_confidence * 10.0)
+    confidence = min(1.0, current.ball_confidence + (vertical_prominence / 40.0) * 0.35 + (angle_change / 90.0) * 0.25)
+    return _BounceCandidate(
+        frame_index=current.frame_index,
+        timestamp_s=current.timestamp_s,
+        ball_court=current.ball_court,
+        in_bounds=in_bounds,
+        confidence=confidence,
+        score=score,
+    )
+
+
+def _select_bounce_candidates(candidates: list[_BounceCandidate], thresholds: Thresholds) -> list[_BounceCandidate]:
+    selected: list[_BounceCandidate] = []
+    for candidate in sorted(candidates, key=lambda item: item.frame_index):
+        if selected and candidate.frame_index - selected[-1].frame_index <= thresholds.bounce_min_separation_frames:
+            if candidate.score > selected[-1].score:
+                selected[-1] = candidate
+            continue
+        selected.append(candidate)
+    return selected
+
+
+def _looks_like_tracked_player_contact(observation: FrameObservation, thresholds: Thresholds) -> bool:
+    if observation.ball_px is None or observation.tracked_player_bbox_px is None:
+        return False
+    if observation.tracked_player_confidence < thresholds.min_player_confidence:
+        return False
+
+    bbox = observation.tracked_player_bbox_px
+    x_margin = bbox.width * thresholds.bounce_player_contact_x_margin_bbox_fraction
+    upper_body_floor = bbox.y1 + (bbox.height * thresholds.bounce_player_contact_body_y_fraction)
+    ball_near_player_x = bbox.x1 - x_margin <= observation.ball_px.x <= bbox.x2 + x_margin
+    ball_above_floor_contact_zone = observation.ball_px.y <= upper_body_floor
+    return ball_near_player_x and ball_above_floor_contact_zone
+
+
+def _nearest_ball_observation(
+    observations: list[FrameObservation],
+    start: int,
+    stop: int,
+    step: int,
+    window_frames: int,
+) -> FrameObservation | None:
+    for index in range(start, stop, step):
+        if abs(observations[index].frame_index - observations[start].frame_index) > window_frames:
+            return None
+        if observations[index].ball_px is not None:
+            return observations[index]
+    return None
+
+
+def _ball_neighbors(
+    observations: list[FrameObservation],
+    center_index: int,
+    step: int,
+    window_frames: int,
+) -> list[FrameObservation]:
+    neighbors: list[FrameObservation] = []
+    center_frame = observations[center_index].frame_index
+    index = center_index + step
+    while 0 <= index < len(observations) and abs(observations[index].frame_index - center_frame) <= window_frames:
+        if observations[index].ball_px is not None:
+            neighbors.append(observations[index])
+        index += step
+    return neighbors
 
 
 def _first_bounce_after(frame_index: int, bounces: list[BounceEvent], bounce_frames: list[int]) -> BounceEvent | None:
@@ -302,4 +403,3 @@ def _infer_actor(observation: FrameObservation, tracked_side: TrackedPlayerSide,
 
 def _has_ball_triplet(first: FrameObservation, second: FrameObservation, third: FrameObservation) -> bool:
     return first.ball_px is not None and second.ball_px is not None and third.ball_px is not None
-

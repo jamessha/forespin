@@ -29,7 +29,7 @@ def _observation(
     court_y: float | None = None,
 ) -> FrameObservation:
     ball_px = Point2D(x, y) if x is not None and y is not None else None
-    ball_court = Point2D(court_x, court_y) if court_x is not None and court_y is not None else ball_px
+    ball_court = Point2D(court_x, court_y) if court_x is not None and court_y is not None else (Point2D(0.5, 0.5) if ball_px else None)
     return FrameObservation(
         frame_index=frame_index,
         timestamp_s=frame_index / 30.0,
@@ -53,6 +53,30 @@ class BallCleanupTests(unittest.TestCase):
         self.assertIsNone(observations[1].ball_px)
         self.assertIsNone(observations[1].ball_court)
         self.assertEqual(observations[1].ball_confidence, 0.0)
+
+    def test_short_false_burst_between_plausible_points_is_rejected(self) -> None:
+        observations = [
+            _observation(0, 0.0, 0.0),
+            _observation(1, 500.0, 500.0),
+            _observation(2, 510.0, 510.0),
+            _observation(3, 30.0, 0.0),
+        ]
+
+        _clean_ball_track(observations, fps=30.0, thresholds=Thresholds(ball_outlier_run_max_frames=2))
+
+        self.assertIsNone(observations[1].ball_px)
+        self.assertIsNone(observations[2].ball_px)
+        self.assertIsNotNone(observations[3].ball_px)
+
+    def test_static_distractor_segment_is_rejected(self) -> None:
+        observations = [
+            _observation(index, 100.0 + (index % 2), 200.0 + (index % 2), confidence=0.95)
+            for index in range(6)
+        ]
+
+        _clean_ball_track(observations, fps=30.0, thresholds=Thresholds())
+
+        self.assertTrue(all(observation.ball_px is None for observation in observations))
 
     def test_long_no_ball_gap_allows_reappearance_anywhere(self) -> None:
         observations = [_observation(0, 0.0, 0.0)]

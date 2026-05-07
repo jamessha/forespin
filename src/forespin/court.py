@@ -67,29 +67,41 @@ class CourtCalibrator:
             raise CourtCalibrationError(f"Unable to open video: {video_path}")
         debug_path = Path(debug_dir).expanduser().resolve() if debug_dir else None
         debug_summaries: list[dict[str, Any]] = []
+        candidate_indices = set(_sampled_frame_indices(max_scan_frames, self.thresholds.court_calibration_sample_frames))
+        best_calibration: CourtCalibration | None = None
+        best_frame_index: int | None = None
+        best_confidence = -1.0
         try:
-            scanned = 0
-            while scanned < max_scan_frames:
+            for frame_index in range(max_scan_frames):
                 ok, frame = capture.read()
                 if not ok:
                     break
+                if frame_index not in candidate_indices:
+                    continue
                 if self.frame_preprocessor is not None:
                     frame = self.frame_preprocessor.preprocess_frame(
                         frame,
                         debug_dir=debug_path,
-                        frame_index=scanned,
+                        frame_index=frame_index,
                     )
                 evaluation = self.backend.evaluate_frame(frame)
                 if debug_path is not None:
-                    self.backend.write_debug_artifacts(debug_path, scanned, frame, evaluation)
-                    debug_summaries.append(evaluation["summary"])
-                scanned += 1
+                    self.backend.write_debug_artifacts(debug_path, frame_index, frame, evaluation)
+                    debug_summaries.append({"frame_index": frame_index, **evaluation["summary"]})
                 if evaluation["calibration"] is not None:
-                    if debug_path is not None:
-                        self._write_debug_summary(debug_path, video_path, debug_summaries, selected_frame=scanned - 1)
-                    return evaluation["calibration"]
+                    confidence = float(evaluation["calibration"].confidence)
+                    if confidence > best_confidence:
+                        best_calibration = evaluation["calibration"]
+                        best_frame_index = frame_index
+                        best_confidence = confidence
         finally:
             capture.release()
+
+        if best_calibration is not None:
+            if debug_path is not None:
+                self._write_debug_summary(debug_path, video_path, debug_summaries, selected_frame=best_frame_index)
+            return best_calibration
+
         message = "Unable to find a usable baseline-view court calibration in the opening frames."
         if debug_path is not None:
             self._write_debug_summary(debug_path, video_path, debug_summaries, selected_frame=None)
@@ -125,13 +137,7 @@ class CourtCalibrator:
         payload = {
             "video_path": str(video_path),
             "selected_frame": selected_frame,
-            "frames": [
-                {
-                    "frame_index": index,
-                    **summary,
-                }
-                for index, summary in enumerate(summaries)
-            ],
+            "frames": summaries,
         }
         (debug_dir / "summary.json").write_text(json.dumps(payload, indent=2, sort_keys=True))
 
@@ -154,6 +160,21 @@ class CourtCalibrator:
                 return False
 
         return True
+
+
+def _sampled_frame_indices(max_scan_frames: int, sample_count: int) -> list[int]:
+    if max_scan_frames <= 0 or sample_count <= 0:
+        return []
+    if max_scan_frames <= sample_count:
+        return list(range(max_scan_frames))
+    if sample_count == 1:
+        return [0]
+    return sorted(
+        {
+            round((max_scan_frames - 1) * offset / (sample_count - 1))
+            for offset in range(sample_count)
+        }
+    )
 
 
 class LearnedCourtCalibratorBackend:

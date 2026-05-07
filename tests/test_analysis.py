@@ -117,7 +117,7 @@ class AnalysisValidationTests(unittest.TestCase):
         calibrator.assert_called_once()
         self.assertIs(calibrator.call_args.kwargs["frame_preprocessor"], preprocessor_instance)
         calibrator_instance.calibrate_video.assert_called_once()
-        self.assertEqual(calibrator_instance.calibrate_video.call_args.kwargs["max_scan_frames"], 1)
+        self.assertEqual(calibrator_instance.calibrate_video.call_args.kwargs["max_scan_frames"], 30)
 
     def test_cached_court_calibration_skips_calibrator(self) -> None:
         input_config = InputConfig(

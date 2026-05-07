@@ -10,11 +10,75 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from forespin.config import Thresholds
-from forespin.domain import BounceEvent, FrameObservation, Handedness, HitEvent, InputConfig, PlayerActor, Point2D, ShotOutcome, ShotType, TrackedPlayerSide
-from forespin.events import annotate_hit_outcomes, annotate_shot_types
+from forespin.domain import BBox, BounceEvent, FrameObservation, Handedness, HitEvent, InputConfig, PlayerActor, Point2D, ShotOutcome, ShotType, TrackedPlayerSide
+from forespin.events import annotate_hit_outcomes, annotate_shot_types, detect_bounces
 
 
 class EventTests(unittest.TestCase):
+    def test_detect_bounces_accepts_floor_contact_local_vertical_maximum(self) -> None:
+        input_config = InputConfig(
+            video_path="match.mp4",
+            tracked_player_side=TrackedPlayerSide.NEAR,
+            handedness=Handedness.RIGHT,
+        )
+        observations = _ball_observations([100, 125, 150, 190, 230, 252, 244, 220, 196, 176])
+
+        bounces = detect_bounces(observations, [], input_config, Thresholds())
+
+        self.assertEqual([bounce.frame_index for bounce in bounces], [5])
+        self.assertTrue(bounces[0].in_bounds)
+
+    def test_detect_bounces_rejects_monotonic_ball_motion(self) -> None:
+        input_config = InputConfig(
+            video_path="match.mp4",
+            tracked_player_side=TrackedPlayerSide.NEAR,
+            handedness=Handedness.RIGHT,
+        )
+        observations = _ball_observations([100, 122, 146, 170, 196, 224, 250, 278, 304, 330])
+
+        bounces = detect_bounces(observations, [], input_config, Thresholds())
+
+        self.assertEqual(bounces, [])
+
+    def test_detect_bounces_suppresses_hit_contact_reversals(self) -> None:
+        input_config = InputConfig(
+            video_path="match.mp4",
+            tracked_player_side=TrackedPlayerSide.NEAR,
+            handedness=Handedness.RIGHT,
+        )
+        observations = _ball_observations([100, 125, 150, 190, 230, 252, 244, 220, 196, 176])
+        hits = [
+            HitEvent(
+                frame_index=4,
+                timestamp_s=4 / 30.0,
+                actor=PlayerActor.TRACKED,
+                shot_type=ShotType.UNKNOWN,
+                ball_px=Point2D(100, 230),
+                ball_court=Point2D(0.5, 0.7),
+                player_court=Point2D(0.5, 0.9),
+                confidence=0.9,
+            )
+        ]
+
+        bounces = detect_bounces(observations, hits, input_config, Thresholds())
+
+        self.assertEqual(bounces, [])
+
+    def test_detect_bounces_rejects_tracked_player_upper_body_contact(self) -> None:
+        input_config = InputConfig(
+            video_path="match.mp4",
+            tracked_player_side=TrackedPlayerSide.NEAR,
+            handedness=Handedness.RIGHT,
+        )
+        observations = _ball_observations([100, 125, 150, 190, 230, 252, 244, 220, 196, 176])
+        for observation in observations:
+            observation.tracked_player_bbox_px = BBox(45, 90, 145, 390)
+            observation.tracked_player_confidence = 0.9
+
+        bounces = detect_bounces(observations, [], input_config, Thresholds())
+
+        self.assertEqual(bounces, [])
+
     def test_annotate_shot_types_marks_serve_forehand_and_volley(self) -> None:
         input_config = InputConfig(
             video_path="match.mp4",
@@ -104,6 +168,19 @@ class EventTests(unittest.TestCase):
         self.assertEqual(annotated[0].result, ShotOutcome.IN)
         self.assertEqual(annotated[1].result, ShotOutcome.UNKNOWN)
         self.assertEqual(annotated[2].result, ShotOutcome.OUT)
+
+
+def _ball_observations(y_values: list[float]) -> list[FrameObservation]:
+    return [
+        FrameObservation(
+            frame_index=index,
+            timestamp_s=index / 30.0,
+            ball_px=Point2D(100 + index * 8, y),
+            ball_court=Point2D(0.5, 0.7),
+            ball_confidence=0.9,
+        )
+        for index, y in enumerate(y_values)
+    ]
 
 
 if __name__ == "__main__":

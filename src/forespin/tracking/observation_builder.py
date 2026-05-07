@@ -68,7 +68,7 @@ def build_observations(
     if court is None:
         court = calibrator.calibrate_video(
             video_path,
-            max_scan_frames=1 if frame_preprocessor is not None else 30,
+            max_scan_frames=30,
             debug_dir=court_debug_dir,
         )
         if options.use_court_calibration_cache:
@@ -133,7 +133,14 @@ def _clean_ball_track(observations: list[FrameObservation], fps: float, threshol
     segment_breaks = _initial_ball_segment_breaks(observations, thresholds)
     _reject_implausible_medium_gap_reappearances(observations, fps, thresholds, segment_breaks)
     segment_breaks = _initial_ball_segment_breaks(observations, thresholds)
-    _reject_isolated_ball_outliers(observations, fps, thresholds, segment_breaks)
+    for _ in range(2):
+        rejected = False
+        rejected = _reject_short_ball_outlier_runs(observations, fps, thresholds, segment_breaks) or rejected
+        segment_breaks = _initial_ball_segment_breaks(observations, thresholds)
+        rejected = _reject_static_ball_segments(observations, thresholds, segment_breaks) or rejected
+        segment_breaks = _initial_ball_segment_breaks(observations, thresholds)
+        if not rejected:
+            break
     return _initial_ball_segment_breaks(observations, thresholds)
 
 
@@ -196,56 +203,125 @@ def _reject_implausible_medium_gap_reappearances(
             previous_index = index
 
 
-def _reject_isolated_ball_outliers(
+def _reject_short_ball_outlier_runs(
     observations: list[FrameObservation],
     fps: float,
     thresholds: Thresholds,
     segment_breaks: set[int],
-) -> None:
+) -> bool:
     rejected_indices: set[int] = set()
     for segment in _ball_track_segments(observations, segment_breaks):
         if len(segment) < 3:
             continue
-        for segment_position in range(1, len(segment) - 1):
-            previous_index = segment[segment_position - 1]
-            current_index = segment[segment_position]
-            following_index = segment[segment_position + 1]
-            if _is_isolated_motion_outlier(
-                observations[previous_index],
-                observations[current_index],
-                observations[following_index],
-                fps,
-                thresholds,
-            ):
-                rejected_indices.add(current_index)
+        segment_position = 1
+        while segment_position < len(segment) - 1:
+            matched_run = False
+            max_run_length = min(max(1, thresholds.ball_outlier_run_max_frames), len(segment) - segment_position - 1)
+            for run_length in range(max_run_length, 0, -1):
+                previous_index = segment[segment_position - 1]
+                following_index = segment[segment_position + run_length]
+                run_indices = segment[segment_position : segment_position + run_length]
+                if _run_endpoints_supported(segment, segment_position, run_length, observations, thresholds) and _is_motion_outlier_run(
+                    observations[previous_index],
+                    [observations[index] for index in run_indices],
+                    observations[following_index],
+                    fps,
+                    thresholds,
+                ):
+                    rejected_indices.update(run_indices)
+                    segment_position += run_length
+                    matched_run = True
+                    break
+            if not matched_run:
+                segment_position += 1
 
     for index in rejected_indices:
         _clear_ball_observation(observations[index])
+    return bool(rejected_indices)
 
 
-def _is_isolated_motion_outlier(
+def _run_endpoints_supported(
+    segment: list[int],
+    run_start_position: int,
+    run_length: int,
+    observations: list[FrameObservation],
+    thresholds: Thresholds,
+) -> bool:
+    left_endpoint_position = run_start_position - 1
+    right_endpoint_position = run_start_position + run_length
+    left_supported = (
+        left_endpoint_position <= 0
+        or _speed_px_s(observations[segment[left_endpoint_position - 1]], observations[segment[left_endpoint_position]])
+        <= thresholds.ball_outlier_max_speed_px_s
+    )
+    right_supported = (
+        right_endpoint_position >= len(segment) - 1
+        or _speed_px_s(observations[segment[right_endpoint_position]], observations[segment[right_endpoint_position + 1]])
+        <= thresholds.ball_outlier_max_speed_px_s
+    )
+    return left_supported and right_supported
+
+
+def _is_motion_outlier_run(
     previous: FrameObservation,
-    current: FrameObservation,
+    run: list[FrameObservation],
     following: FrameObservation,
     fps: float,
     thresholds: Thresholds,
 ) -> bool:
-    if previous.ball_px is None or current.ball_px is None or following.ball_px is None:
+    if previous.ball_px is None or following.ball_px is None or any(observation.ball_px is None for observation in run):
         return False
 
-    speed_in = _speed_px_s(previous, current)
-    speed_out = _speed_px_s(current, following)
     bridge_speed = _speed_px_s(previous, following)
-    acceleration = _acceleration_px_s2(previous, current, following)
-    expected_current = _interpolate_by_timestamp(previous, following, current.timestamp_s)
-    residual_px = _point_distance(current.ball_px, expected_current)
-    residual_floor_px = max(20.0, thresholds.ball_outlier_max_speed_px_s / max(fps, 1.0) * 0.25)
+    if bridge_speed > thresholds.ball_outlier_max_speed_px_s:
+        return False
 
-    implausible_local_motion = (
+    residual_floor_px = max(20.0, thresholds.ball_outlier_max_speed_px_s / max(fps, 1.0) * 0.25)
+    residuals = [
+        _point_distance(observation.ball_px, _interpolate_by_timestamp(previous, following, observation.timestamp_s))
+        for observation in run
+        if observation.ball_px is not None
+    ]
+    if not residuals or min(residuals) < residual_floor_px:
+        return False
+
+    speed_in = _speed_px_s(previous, run[0])
+    speed_out = _speed_px_s(run[-1], following)
+    acceleration = _run_edge_acceleration_px_s2(previous, run, following)
+    implausible_edge_motion = (
         max(speed_in, speed_out) > thresholds.ball_outlier_max_speed_px_s
         or acceleration > thresholds.ball_outlier_max_acceleration_px_s2
     )
-    return implausible_local_motion and bridge_speed <= thresholds.ball_outlier_max_speed_px_s and residual_px >= residual_floor_px
+    return implausible_edge_motion or sum(residuals) / len(residuals) >= residual_floor_px * 1.8
+
+
+def _reject_static_ball_segments(
+    observations: list[FrameObservation],
+    thresholds: Thresholds,
+    segment_breaks: set[int],
+) -> bool:
+    rejected_indices: set[int] = set()
+    for segment in _ball_track_segments(observations, segment_breaks):
+        if len(segment) < thresholds.ball_static_segment_min_frames:
+            continue
+        points = [observations[index].ball_px for index in segment if observations[index].ball_px is not None]
+        if not points:
+            continue
+        first_last_distance = _point_distance(points[0], points[-1])
+        min_x = min(point.x for point in points)
+        max_x = max(point.x for point in points)
+        min_y = min(point.y for point in points)
+        max_y = max(point.y for point in points)
+        bbox_diagonal = math.hypot(max_x - min_x, max_y - min_y)
+        if (
+            first_last_distance <= thresholds.ball_static_segment_max_displacement_px
+            and bbox_diagonal <= thresholds.ball_static_segment_max_displacement_px * 1.5
+        ):
+            rejected_indices.update(segment)
+
+    for index in rejected_indices:
+        _clear_ball_observation(observations[index])
+    return bool(rejected_indices)
 
 
 def _interpolate_ball_track(
@@ -389,6 +465,17 @@ def _acceleration_px_s2(previous: FrameObservation, current: FrameObservation, f
         return math.inf
     velocity_in = _velocity_between(previous, current)
     velocity_out = _velocity_between(current, following)
+    duration_s = max(1e-6, following.timestamp_s - previous.timestamp_s)
+    return _point_distance(velocity_in, velocity_out) / duration_s
+
+
+def _run_edge_acceleration_px_s2(previous: FrameObservation, run: list[FrameObservation], following: FrameObservation) -> float:
+    if not run:
+        return 0.0
+    if previous.ball_px is None or run[0].ball_px is None or run[-1].ball_px is None or following.ball_px is None:
+        return math.inf
+    velocity_in = _velocity_between(previous, run[0])
+    velocity_out = _velocity_between(run[-1], following)
     duration_s = max(1e-6, following.timestamp_s - previous.timestamp_s)
     return _point_distance(velocity_in, velocity_out) / duration_s
 

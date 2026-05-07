@@ -10,7 +10,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from forespin.domain import Point2D
-from forespin.overlay import _clip_point_to_frame
+from forespin.overlay import _bounce_map_point, _clip_point_to_frame
 
 
 class OverlayTests(unittest.TestCase):
@@ -21,6 +21,12 @@ class OverlayTests(unittest.TestCase):
         assert clipped is not None
         self.assertEqual(clipped.x, 0.0)
         self.assertEqual(clipped.y, 719.0)
+
+    def test_bounce_map_mirrors_court_x_for_baseline_view(self) -> None:
+        mapped = _bounce_map_point(Point2D(0.2, 0.7))
+
+        self.assertAlmostEqual(mapped.x, 0.8)
+        self.assertAlmostEqual(mapped.y, 0.7)
 
 
 if __name__ == "__main__":

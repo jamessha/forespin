@@ -18,6 +18,7 @@ class BallTrackerProtocol:
 class TrackNetV2BallTracker(BallTrackerProtocol):
     MODEL_INPUT_WIDTH = 640
     MODEL_INPUT_HEIGHT = 360
+    COLOR_VALIDATION_RADIUS_PX = 34
 
     def __init__(self, weights_path: str) -> None:
         self.weights_path = Path(weights_path)
@@ -62,6 +63,8 @@ class TrackNetV2BallTracker(BallTrackerProtocol):
             (heatmap_x / max(1, width - 1)) * frame.shape[1],
             (heatmap_y / max(1, height - 1)) * frame.shape[0],
         )
+        if not self._has_local_tennis_ball_color(frame, center):
+            return BallTrack(position_px=None, confidence=confidence * 0.1)
         return BallTrack(position_px=center, confidence=confidence)
 
     def _track_from_yastrebksv_logits(self, output: Any, frame: Any, cv2: Any, np: Any) -> BallTrack:
@@ -88,7 +91,50 @@ class TrackNetV2BallTracker(BallTrackerProtocol):
             (heatmap_x / max(1, self.MODEL_INPUT_WIDTH - 1)) * frame.shape[1],
             (heatmap_y / max(1, self.MODEL_INPUT_HEIGHT - 1)) * frame.shape[0],
         )
+        if not self._has_local_tennis_ball_color(frame, center):
+            return BallTrack(position_px=None, confidence=confidence * 0.1)
         return BallTrack(position_px=center, confidence=confidence)
+
+    def _has_local_tennis_ball_color(self, frame: Any, center: Point2D) -> bool:
+        cv2, np = require_vision_stack()
+        height, width = frame.shape[:2]
+        x = int(round(center.x))
+        y = int(round(center.y))
+        radius = self.COLOR_VALIDATION_RADIUS_PX
+        x1 = max(0, x - radius)
+        x2 = min(width, x + radius + 1)
+        y1 = max(0, y - radius)
+        y2 = min(height, y + radius + 1)
+        if x1 >= x2 or y1 >= y2:
+            return False
+
+        crop = frame[y1:y2, x1:x2]
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(
+            hsv,
+            np.array([18, 35, 70], dtype=np.uint8),
+            np.array([65, 255, 255], dtype=np.uint8),
+        )
+        mask = cv2.medianBlur(mask, 3)
+        component_count, _, stats, centroids = cv2.connectedComponentsWithStats(mask)
+        for component_index in range(1, component_count):
+            component_x, component_y, component_width, component_height, area = stats[component_index]
+            if area < 3 or area > 1200:
+                continue
+            if component_width > 56 or component_height > 56:
+                continue
+            aspect_ratio = max(component_width, component_height) / max(1, min(component_width, component_height))
+            if aspect_ratio > 2.8:
+                continue
+            fill_ratio = area / max(1, component_width * component_height)
+            if fill_ratio < 0.20:
+                continue
+            component_center_x = x1 + float(centroids[component_index][0])
+            component_center_y = y1 + float(centroids[component_index][1])
+            max_distance = max(14.0, max(component_width, component_height) * 1.5)
+            if ((component_center_x - center.x) ** 2 + (component_center_y - center.y) ** 2) ** 0.5 <= max_distance:
+                return True
+        return False
 
     def _load_model(self) -> Any:
         if self._model is None:
