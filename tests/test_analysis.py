@@ -78,7 +78,11 @@ class AnalysisValidationTests(unittest.TestCase):
             player_pose_weights="player.pt",
             court_weights="court.pt",
         )
-        options = AnalysisOptions(remove_net_for_court_calibration=True, use_court_calibration_cache=False)
+        options = AnalysisOptions(
+            remove_net_for_court_calibration=True,
+            use_court_calibration_cache=False,
+            use_tracking_trace_cache=False,
+        )
         fake_capture = MagicMock()
         fake_capture.isOpened.return_value = True
         fake_capture.get.return_value = 0
@@ -129,7 +133,7 @@ class AnalysisValidationTests(unittest.TestCase):
             player_pose_weights="player.pt",
             court_weights="court.pt",
         )
-        options = AnalysisOptions()
+        options = AnalysisOptions(use_tracking_trace_cache=False)
         fake_capture = MagicMock()
         fake_capture.isOpened.return_value = True
         fake_capture.get.return_value = 0
@@ -175,7 +179,7 @@ class AnalysisValidationTests(unittest.TestCase):
             player_pose_weights="player.pt",
             court_weights="court.pt",
         )
-        options = AnalysisOptions()
+        options = AnalysisOptions(use_tracking_trace_cache=False)
         fake_capture = MagicMock()
         fake_capture.isOpened.return_value = True
         fake_capture.get.return_value = 0

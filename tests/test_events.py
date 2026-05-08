@@ -10,7 +10,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from forespin.config import Thresholds
-from forespin.domain import BBox, BounceEvent, FrameObservation, Handedness, HitEvent, InputConfig, PlayerActor, Point2D, ShotOutcome, ShotType, TrackedPlayerSide
+from forespin.domain import BounceEvent, FrameObservation, Handedness, HitEvent, InputConfig, PlayerActor, Point2D, ShotOutcome, ShotType, TrackedPlayerSide
 from forespin.events import annotate_hit_outcomes, annotate_shot_types, detect_bounces
 
 
@@ -21,7 +21,7 @@ class EventTests(unittest.TestCase):
             tracked_player_side=TrackedPlayerSide.NEAR,
             handedness=Handedness.RIGHT,
         )
-        observations = _ball_observations([100, 125, 150, 190, 230, 252, 244, 220, 196, 176])
+        observations = _ball_observations([160, 168, 176, 182, 186, 190, 184, 180, 176, 172])
 
         bounces = detect_bounces(observations, [], input_config, Thresholds())
 
@@ -46,7 +46,7 @@ class EventTests(unittest.TestCase):
             tracked_player_side=TrackedPlayerSide.NEAR,
             handedness=Handedness.RIGHT,
         )
-        observations = _ball_observations([100, 125, 150, 190, 230, 252, 244, 220, 196, 176])
+        observations = _ball_observations([160, 168, 176, 182, 186, 190, 184, 180, 176, 172])
         hits = [
             HitEvent(
                 frame_index=4,
@@ -64,20 +64,29 @@ class EventTests(unittest.TestCase):
 
         self.assertEqual(bounces, [])
 
-    def test_detect_bounces_rejects_tracked_player_upper_body_contact(self) -> None:
+    def test_detect_bounces_allows_strong_floor_contact_near_bad_hit_label(self) -> None:
         input_config = InputConfig(
             video_path="match.mp4",
             tracked_player_side=TrackedPlayerSide.NEAR,
             handedness=Handedness.RIGHT,
         )
         observations = _ball_observations([100, 125, 150, 190, 230, 252, 244, 220, 196, 176])
-        for observation in observations:
-            observation.tracked_player_bbox_px = BBox(45, 90, 145, 390)
-            observation.tracked_player_confidence = 0.9
+        hits = [
+            HitEvent(
+                frame_index=4,
+                timestamp_s=4 / 30.0,
+                actor=PlayerActor.TRACKED,
+                shot_type=ShotType.UNKNOWN,
+                ball_px=Point2D(100, 230),
+                ball_court=Point2D(0.5, 0.7),
+                player_court=Point2D(0.5, 0.9),
+                confidence=0.9,
+            )
+        ]
 
-        bounces = detect_bounces(observations, [], input_config, Thresholds())
+        bounces = detect_bounces(observations, hits, input_config, Thresholds())
 
-        self.assertEqual(bounces, [])
+        self.assertEqual([bounce.frame_index for bounce in bounces], [5])
 
     def test_annotate_shot_types_marks_serve_forehand_and_volley(self) -> None:
         input_config = InputConfig(

@@ -13,6 +13,7 @@ from forespin.model_weights import resolve_model_weights
 from forespin.net_removal import OpenAINetRemovalPreprocessor
 from forespin.tracking.ball import create_ball_tracker
 from forespin.tracking.player import create_player_tracker
+from forespin.tracking_trace_cache import read_cached_tracking_trace, tracking_trace_cache_path, write_cached_tracking_trace
 
 
 def build_observations(
@@ -37,6 +38,23 @@ def build_observations(
         frame_count=frame_count,
         duration_s=(frame_count / fps) if fps else 0.0,
     )
+    analysis_output_dir = Path(input_config.output_dir or "outputs") / video_path.stem
+    trace_cache_path = tracking_trace_cache_path(
+        output_dir=Path(input_config.output_dir or "outputs"),
+        video_path=video_path,
+    )
+    if options.use_tracking_trace_cache:
+        cached_trace = read_cached_tracking_trace(
+            trace_cache_path,
+            video_path=video_path,
+            input_config=input_config,
+            metadata=metadata,
+            resolved_weights=resolved_weights,
+            options=options,
+        )
+        if cached_trace is not None:
+            capture.release()
+            return cached_trace
 
     frame_preprocessor = (
         OpenAINetRemovalPreprocessor(model=options.net_removal_model)
@@ -48,7 +66,6 @@ def build_observations(
         weights_path=resolved_weights.court_weights,
         frame_preprocessor=frame_preprocessor,
     )
-    analysis_output_dir = Path(input_config.output_dir or "outputs") / video_path.stem
     court_debug_dir = analysis_output_dir / "debug" / "court_calibration"
     cache_path = court_calibration_cache_path(
         output_dir=Path(input_config.output_dir or "outputs"),
@@ -119,6 +136,17 @@ def build_observations(
     _interpolate_ball_track(observations, options.thresholds.interpolate_ball_gaps_up_to_frames, segment_breaks)
     _smooth_ball_track(observations, options.thresholds.smoothing_window, segment_breaks)
     _compute_ball_velocity(observations, fps, segment_breaks)
+    if options.use_tracking_trace_cache:
+        write_cached_tracking_trace(
+            trace_cache_path,
+            video_path=video_path,
+            input_config=input_config,
+            metadata=metadata,
+            resolved_weights=resolved_weights,
+            options=options,
+            observations=observations,
+            court=court,
+        )
     return metadata, observations, court
 
 

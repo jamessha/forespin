@@ -73,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ignore and overwrite the per-video cached court calibration.",
     )
+    analyze.add_argument(
+        "--no-trace-cache",
+        action="store_true",
+        help="Ignore and overwrite the per-video tracking trace cache.",
+    )
 
     download = subparsers.add_parser("download", help="Download supported model weights into the repo.")
     download.add_argument("artifact", choices=["yolo"], help="The model artifact to download.")
@@ -111,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         remove_net_for_court_calibration=args.remove_net_for_court_calibration,
         net_removal_model=args.net_removal_model,
         use_court_calibration_cache=not args.no_court_cache,
+        use_tracking_trace_cache=not args.no_trace_cache,
     )
     input_config = InputConfig(
         video_path=str(Path(args.video_path).expanduser().resolve()),

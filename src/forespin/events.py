@@ -249,11 +249,7 @@ def _score_floor_bounce_candidate(
     current = observations[index]
     if current.ball_px is None or current.ball_confidence < thresholds.min_ball_confidence:
         return None
-    if _looks_like_tracked_player_contact(current, thresholds):
-        return None
     if current.ball_court is not None and not point_in_court(current.ball_court, tolerance=thresholds.bounce_court_margin):
-        return None
-    if any(abs(current.frame_index - hit_frame) <= thresholds.bounce_suppress_frames_after_hit for hit_frame in hit_frames):
         return None
 
     previous = _nearest_ball_observation(observations, index - 1, -1, -1, thresholds.bounce_floor_window_frames)
@@ -293,6 +289,15 @@ def _score_floor_bounce_candidate(
         return None
 
     in_bounds = point_in_court(current.ball_court, tolerance=0.03)
+    near_hit = any(abs(current.frame_index - hit_frame) <= thresholds.bounce_suppress_frames_after_hit for hit_frame in hit_frames)
+    strong_floor_contact = (
+        in_bounds
+        and vertical_prominence >= thresholds.bounce_hit_overlap_min_vertical_prominence_px
+        and speed_ratio <= thresholds.bounce_hit_overlap_max_speed_ratio
+    )
+    if near_hit and not strong_floor_contact:
+        return None
+
     score = vertical_prominence + (angle_change * 0.35) + (max(0.0, 1.0 - speed_ratio) * 20.0) + (current.ball_confidence * 10.0)
     confidence = min(1.0, current.ball_confidence + (vertical_prominence / 40.0) * 0.35 + (angle_change / 90.0) * 0.25)
     return _BounceCandidate(
@@ -314,20 +319,6 @@ def _select_bounce_candidates(candidates: list[_BounceCandidate], thresholds: Th
             continue
         selected.append(candidate)
     return selected
-
-
-def _looks_like_tracked_player_contact(observation: FrameObservation, thresholds: Thresholds) -> bool:
-    if observation.ball_px is None or observation.tracked_player_bbox_px is None:
-        return False
-    if observation.tracked_player_confidence < thresholds.min_player_confidence:
-        return False
-
-    bbox = observation.tracked_player_bbox_px
-    x_margin = bbox.width * thresholds.bounce_player_contact_x_margin_bbox_fraction
-    upper_body_floor = bbox.y1 + (bbox.height * thresholds.bounce_player_contact_body_y_fraction)
-    ball_near_player_x = bbox.x1 - x_margin <= observation.ball_px.x <= bbox.x2 + x_margin
-    ball_above_floor_contact_zone = observation.ball_px.y <= upper_body_floor
-    return ball_near_player_x and ball_above_floor_contact_zone
 
 
 def _nearest_ball_observation(

@@ -19,8 +19,8 @@ class Thresholds:
     bounce_min_vertical_prominence_px: float = 6.0
     bounce_court_margin: float = 0.25
     bounce_min_separation_frames: int = 14
-    bounce_player_contact_x_margin_bbox_fraction: float = 0.90
-    bounce_player_contact_body_y_fraction: float = 0.68
+    bounce_hit_overlap_min_vertical_prominence_px: float = 40.0
+    bounce_hit_overlap_max_speed_ratio: float = 2.0
     fallback_bounce_window_frames: int = 10
     hit_suppress_window_frames: int = 5
     dead_ball_gap_frames: int = 75
@@ -54,4 +54,5 @@ class AnalysisOptions:
     remove_net_for_court_calibration: bool = False
     net_removal_model: str = "gpt-image-2"
     use_court_calibration_cache: bool = True
+    use_tracking_trace_cache: bool = True
     thresholds: Thresholds = field(default_factory=Thresholds)
