@@ -24,6 +24,7 @@ from forespin.geometry import (
     inside_service_line,
     magnitude,
     point_in_court,
+    point_in_singles_court,
     point_on_opponent_side,
     subtract,
 )
@@ -288,7 +289,7 @@ def _score_floor_bounce_candidate(
     if angle_change < thresholds.bounce_angle_change_deg and speed_ratio > thresholds.bounce_speed_drop_ratio:
         return None
 
-    in_bounds = point_in_court(current.ball_court, tolerance=0.03)
+    in_bounds = point_in_singles_court(current.ball_court, tolerance=0.03)
     near_hit = any(abs(current.frame_index - hit_frame) <= thresholds.bounce_suppress_frames_after_hit for hit_frame in hit_frames)
     strong_floor_contact = (
         in_bounds

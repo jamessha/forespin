@@ -6,6 +6,11 @@ from collections.abc import Iterable
 from forespin.config import Thresholds
 from forespin.domain import Handedness, Point2D, TrackedPlayerSide
 
+SINGLES_LEFT_X = 4.5 / 36.0
+SINGLES_RIGHT_X = 31.5 / 36.0
+FAR_SERVICE_Y = 18.0 / 78.0
+NEAR_SERVICE_Y = 60.0 / 78.0
+
 
 def distance(a: Point2D | None, b: Point2D | None) -> float:
     if a is None or b is None:
@@ -83,6 +88,15 @@ def point_in_court(point: Point2D | None, tolerance: float = 0.03) -> bool:
     return (-tolerance <= point.x <= 1.0 + tolerance) and (-tolerance <= point.y <= 1.0 + tolerance)
 
 
+def point_in_singles_court(point: Point2D | None, tolerance: float = 0.03) -> bool:
+    if point is None:
+        return False
+    return (
+        SINGLES_LEFT_X - tolerance <= point.x <= SINGLES_RIGHT_X + tolerance
+        and -tolerance <= point.y <= 1.0 + tolerance
+    )
+
+
 def point_on_opponent_side(point: Point2D | None, tracked_side: TrackedPlayerSide) -> bool:
     if point is None:
         return False
@@ -135,4 +149,3 @@ def expected_forehand_is_ball_right_of_player(
     if handedness == Handedness.RIGHT:
         return tracked_side == TrackedPlayerSide.NEAR
     return tracked_side == TrackedPlayerSide.FAR
-

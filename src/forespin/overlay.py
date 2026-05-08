@@ -5,6 +5,11 @@ from pathlib import Path
 
 from forespin.deps import require_vision_stack
 from forespin.domain import AnalysisResult, BounceEvent, HitEvent, PlayerActor, Point2D
+from forespin.geometry import FAR_SERVICE_Y, NEAR_SERVICE_Y, SINGLES_LEFT_X, SINGLES_RIGHT_X
+
+DOUBLES_COURT_WIDTH_FT = 36.0
+COURT_LENGTH_FT = 78.0
+COURT_CENTER_X = 0.5
 
 
 def render_overlay_video(result: AnalysisResult, output_path: str | Path) -> Path:
@@ -35,7 +40,7 @@ def render_overlay_video(result: AnalysisResult, output_path: str | Path) -> Pat
             ok, frame = capture.read()
             if not ok:
                 break
-            _draw_calibrated_court(frame, result.court.corners_px, cv2)
+            _draw_calibrated_court(frame, result.court.homography, cv2)
             observation = result.observations[frame_index] if frame_index < len(result.observations) else None
             if observation is not None:
                 _draw_point(frame, observation.ball_px, (0, 0, 255), 7)
@@ -84,11 +89,11 @@ def _draw_virtual_court(frame, bounces: list[BounceEvent], cv2) -> None:
     margin = 18
     padding = 12
     court_width = min(180, max(90, int(width * 0.11)))
-    court_height = int(court_width * (78.0 / 27.0))
+    court_height = int(court_width * (COURT_LENGTH_FT / DOUBLES_COURT_WIDTH_FT))
     max_height = int(height * 0.42)
     if court_height > max_height:
         court_height = max_height
-        court_width = int(court_height * (27.0 / 78.0))
+        court_width = int(court_height * (DOUBLES_COURT_WIDTH_FT / COURT_LENGTH_FT))
 
     panel_width = court_width + padding * 2
     panel_height = court_height + padding * 2 + 22
@@ -123,16 +128,15 @@ def _draw_virtual_court(frame, bounces: list[BounceEvent], cv2) -> None:
     line_color = (235, 235, 225)
     cv2.rectangle(frame, (court_x, court_y), (court_x + court_width, court_y + court_height), line_color, 2)
 
-    # Regulation singles court proportions: service lines are 21 ft from the net on a 78 ft court.
     net_y = 0.5
-    far_service_y = 18.0 / 78.0
-    near_service_y = 60.0 / 78.0
-    center_x = 0.5
-    for y in (net_y, far_service_y, near_service_y):
-        start = to_px(Point2D(0.0, y))
-        end = to_px(Point2D(1.0, y))
+    cv2.line(frame, to_px(Point2D(0.0, net_y)), to_px(Point2D(1.0, net_y)), line_color, 1)
+    for x in (SINGLES_LEFT_X, SINGLES_RIGHT_X):
+        cv2.line(frame, to_px(Point2D(x, 0.0)), to_px(Point2D(x, 1.0)), line_color, 1)
+    for y in (FAR_SERVICE_Y, NEAR_SERVICE_Y):
+        start = to_px(Point2D(SINGLES_LEFT_X, y))
+        end = to_px(Point2D(SINGLES_RIGHT_X, y))
         cv2.line(frame, start, end, line_color, 1)
-    cv2.line(frame, to_px(Point2D(center_x, far_service_y)), to_px(Point2D(center_x, near_service_y)), line_color, 1)
+    cv2.line(frame, to_px(Point2D(COURT_CENTER_X, FAR_SERVICE_Y)), to_px(Point2D(COURT_CENTER_X, NEAR_SERVICE_Y)), line_color, 1)
 
     recent_frame = bounces[-1].frame_index if bounces else None
     for bounce in bounces[-80:]:
@@ -154,34 +158,69 @@ def _bounce_map_point(point: Point2D) -> Point2D:
     )
 
 
-def _draw_calibrated_court(frame, corners: list[Point2D], cv2) -> None:
-    if len(corners) != 4:
+def _draw_calibrated_court(frame, homography: list[list[float]], cv2) -> None:
+    if len(homography) != 3:
         return
-    clipped = [_clip_point_to_frame(point, frame.shape[1], frame.shape[0]) for point in corners]
-    if any(point is None for point in clipped):
+    _, np = require_vision_stack()
+    try:
+        normalized_to_image = np.linalg.inv(np.array(homography, dtype=np.float64))
+    except np.linalg.LinAlgError:
         return
-    points = [point for point in clipped if point is not None]
     overlay = frame.copy()
-    for start, end in zip(points, points[1:] + points[:1]):
-        cv2.line(
-            overlay,
-            (int(start.x), int(start.y)),
-            (int(end.x), int(end.y)),
-            (255, 80, 0),
-            3,
-        )
-    for index, point in enumerate(points):
-        cv2.circle(overlay, (int(point.x), int(point.y)), 5, (255, 160, 0), -1)
-        cv2.putText(
-            overlay,
-            f"C{index}",
-            (int(point.x) + 6, int(point.y) - 6),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (255, 160, 0),
-            2,
-        )
+    outer = [Point2D(0.0, 0.0), Point2D(1.0, 0.0), Point2D(1.0, 1.0), Point2D(0.0, 1.0)]
+    for start, end in zip(outer, outer[1:] + outer[:1]):
+        _draw_projected_line(overlay, start, end, normalized_to_image, cv2, thickness=3)
+    for x in (SINGLES_LEFT_X, SINGLES_RIGHT_X):
+        _draw_projected_line(overlay, Point2D(x, 0.0), Point2D(x, 1.0), normalized_to_image, cv2, thickness=2)
+    _draw_projected_line(overlay, Point2D(0.0, 0.5), Point2D(1.0, 0.5), normalized_to_image, cv2, thickness=2)
+    for y in (FAR_SERVICE_Y, NEAR_SERVICE_Y):
+        _draw_projected_line(overlay, Point2D(SINGLES_LEFT_X, y), Point2D(SINGLES_RIGHT_X, y), normalized_to_image, cv2, thickness=2)
+    _draw_projected_line(
+        overlay,
+        Point2D(COURT_CENTER_X, FAR_SERVICE_Y),
+        Point2D(COURT_CENTER_X, NEAR_SERVICE_Y),
+        normalized_to_image,
+        cv2,
+        thickness=2,
+    )
     cv2.addWeighted(overlay, 0.65, frame, 0.35, 0, dst=frame)
+
+
+def _draw_projected_line(frame, start: Point2D, end: Point2D, normalized_to_image, cv2, *, thickness: int) -> None:
+    projected_start = _project_normalized_point(start, normalized_to_image)
+    projected_end = _project_normalized_point(end, normalized_to_image)
+    if projected_start is None or projected_end is None:
+        return
+    cv2.line(
+        frame,
+        (int(round(projected_start.x)), int(round(projected_start.y))),
+        (int(round(projected_end.x)), int(round(projected_end.y))),
+        (255, 80, 0),
+        thickness,
+    )
+
+
+def _project_normalized_point(point: Point2D, normalized_to_image) -> Point2D | None:
+    denominator = (
+        normalized_to_image[2][0] * point.x
+        + normalized_to_image[2][1] * point.y
+        + normalized_to_image[2][2]
+    )
+    if abs(denominator) <= 1e-8:
+        return None
+    x = (
+        normalized_to_image[0][0] * point.x
+        + normalized_to_image[0][1] * point.y
+        + normalized_to_image[0][2]
+    ) / denominator
+    y = (
+        normalized_to_image[1][0] * point.x
+        + normalized_to_image[1][1] * point.y
+        + normalized_to_image[1][2]
+    ) / denominator
+    if not math.isfinite(x) or not math.isfinite(y):
+        return None
+    return Point2D(float(x), float(y))
 
 
 def _clip_point_to_frame(point: Point2D, width: int, height: int) -> Point2D | None:
