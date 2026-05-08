@@ -109,7 +109,6 @@ def build_observations(
             if not ok:
                 break
 
-            court = calibrator.maybe_refresh(frame_index, frame, court)
             ball_track = ball_tracker.track(frame)
             player_track = player_tracker.track(frame)
             observations.append(

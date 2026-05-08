@@ -216,6 +216,58 @@ class AnalysisValidationTests(unittest.TestCase):
         calibrator.return_value.calibrate_video.assert_called_once()
         write_cache.assert_called_once()
 
+    def test_build_observations_keeps_initial_court_fixed(self) -> None:
+        input_config = InputConfig(
+            video_path="match.mp4",
+            tracked_player_side=TrackedPlayerSide.NEAR,
+            handedness=Handedness.RIGHT,
+            output_dir="outputs",
+            tracknet_weights="tracknet.pt",
+            player_pose_weights="player.pt",
+            court_weights="court.pt",
+        )
+        options = AnalysisOptions(use_court_calibration_cache=False, use_tracking_trace_cache=False)
+        fake_capture = MagicMock()
+        fake_capture.isOpened.return_value = True
+        fake_capture.get.side_effect = [2, 30, 1920, 1080]
+        fake_capture.read.side_effect = [(True, object()), (True, object()), (False, None)]
+        calibrated_court = CourtCalibration(
+            corners_px=[Point2D(0.0, 0.0), Point2D(1.0, 0.0), Point2D(1.0, 1.0), Point2D(0.0, 1.0)],
+            homography=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            confidence=0.9,
+            source="learned_court",
+        )
+
+        with patch("forespin.tracking.observation_builder.resolve_model_weights") as resolve_weights:
+            resolve_weights.return_value = MagicMock(
+                tracknet_weights="tracknet.pt",
+                player_pose_weights="player.pt",
+                court_weights="court.pt",
+            )
+            with patch("forespin.tracking.observation_builder.require_vision_stack") as vision_stack:
+                cv2 = MagicMock()
+                cv2.VideoCapture.return_value = fake_capture
+                cv2.CAP_PROP_FRAME_COUNT = 0
+                cv2.CAP_PROP_FPS = 1
+                cv2.CAP_PROP_FRAME_WIDTH = 2
+                cv2.CAP_PROP_FRAME_HEIGHT = 3
+                vision_stack.return_value = (cv2, object())
+                with patch("forespin.tracking.observation_builder.CourtCalibrator") as calibrator:
+                    calibrator.return_value.calibrate_video.return_value = calibrated_court
+                    with patch("forespin.tracking.observation_builder.create_ball_tracker") as ball_tracker:
+                        ball_tracker.return_value.track.return_value = MagicMock(position_px=None, confidence=0.0)
+                        with patch("forespin.tracking.observation_builder.create_player_tracker") as player_tracker:
+                            player_tracker.return_value.track.return_value = MagicMock(
+                                bbox_px=None,
+                                feet_px=None,
+                                torso_px=None,
+                                confidence=0.0,
+                            )
+                            build_observations(input_config, options)
+
+        calibrator.return_value.calibrate_video.assert_called_once()
+        calibrator.return_value.maybe_refresh.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

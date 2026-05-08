@@ -105,7 +105,6 @@ def _tracking_trace_cache_key(
             for name in (
                 "min_ball_confidence",
                 "min_player_confidence",
-                "refresh_court_every_n_frames",
                 "smoothing_window",
                 "interpolate_ball_gaps_up_to_frames",
                 "ball_track_segment_gap_frames",
