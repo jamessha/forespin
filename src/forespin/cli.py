@@ -55,18 +55,28 @@ def build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument("--skip-overlay", action="store_true", help="Do not render the overlay MP4.")
     analyze.add_argument("--allow-low-quality", action="store_true", help="Persist metrics even when the quality gate rejects the clip.")
-    analyze.add_argument(
+    net_removal = analyze.add_mutually_exclusive_group()
+    net_removal.add_argument(
         "--remove-net-for-court-calibration",
+        dest="remove_net_for_court_calibration",
         action="store_true",
+        default=True,
         help=(
             "Use OpenAI image editing to remove the net from the first frame before court calibration. "
+            "This is enabled by default because the court model is trained on lower-net-occlusion footage. "
             "Requires OPENAI_API_KEY in the environment or a .env file."
         ),
+    )
+    net_removal.add_argument(
+        "--no-remove-net-for-court-calibration",
+        dest="remove_net_for_court_calibration",
+        action="store_false",
+        help="Disable OpenAI net removal and calibrate the court from raw video frames.",
     )
     analyze.add_argument(
         "--net-removal-model",
         default="gpt-image-2",
-        help="OpenAI image model for --remove-net-for-court-calibration. Defaults to gpt-image-2.",
+        help="OpenAI image model used when court-calibration net removal is enabled. Defaults to gpt-image-2.",
     )
     analyze.add_argument(
         "--no-court-cache",

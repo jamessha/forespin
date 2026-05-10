@@ -60,10 +60,13 @@ def main() -> None:
     allow_low_quality = st.checkbox("Persist low-confidence results", value=False)
     remove_net_for_court_calibration = st.checkbox(
         "Remove net from first frame before court calibration with OpenAI",
-        value=False,
+        value=True,
     )
     if remove_net_for_court_calibration:
-        st.caption("Requires `OPENAI_API_KEY` in the environment or a local `.env` file.")
+        st.caption(
+            "Enabled by default because the court model is trained on professional footage with less net occlusion. "
+            "Requires `OPENAI_API_KEY` in the environment or a local `.env` file."
+        )
     use_court_calibration_cache = st.checkbox("Reuse cached court calibration", value=True)
 
     if uploaded is None:

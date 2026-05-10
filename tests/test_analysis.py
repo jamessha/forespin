@@ -12,6 +12,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from forespin.analysis import TennisAnalyzer
+from forespin.cli import build_parser
 from forespin.config import AnalysisOptions
 from forespin.domain import CourtCalibration, Handedness, InputConfig, Point2D, TrackedPlayerSide
 from forespin.tracking.observation_builder import build_observations
@@ -19,6 +20,35 @@ from forespin.model_weights import MissingModelWeightsError
 
 
 class AnalysisValidationTests(unittest.TestCase):
+    def test_cli_enables_net_removal_by_default(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "analyze",
+                "match.mp4",
+                "--player-side",
+                "near",
+                "--handedness",
+                "right",
+            ]
+        )
+
+        self.assertTrue(args.remove_net_for_court_calibration)
+
+    def test_cli_can_disable_default_net_removal(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "analyze",
+                "match.mp4",
+                "--player-side",
+                "near",
+                "--handedness",
+                "right",
+                "--no-remove-net-for-court-calibration",
+            ]
+        )
+
+        self.assertFalse(args.remove_net_for_court_calibration)
+
     def test_analyze_requires_tracknet_source(self) -> None:
         analyzer = TennisAnalyzer()
         input_config = InputConfig(
@@ -69,7 +99,7 @@ class AnalysisValidationTests(unittest.TestCase):
                             with self.assertRaisesRegex(MissingModelWeightsError, "Learned court detector weights are required"):
                                 analyzer.analyze(input_config)
 
-    def test_openai_net_removal_uses_first_frame_for_court_calibration(self) -> None:
+    def test_default_openai_net_removal_uses_first_frame_for_court_calibration(self) -> None:
         input_config = InputConfig(
             video_path="match.mp4",
             tracked_player_side=TrackedPlayerSide.NEAR,
@@ -79,7 +109,6 @@ class AnalysisValidationTests(unittest.TestCase):
             court_weights="court.pt",
         )
         options = AnalysisOptions(
-            remove_net_for_court_calibration=True,
             use_court_calibration_cache=False,
             use_tracking_trace_cache=False,
         )
@@ -133,7 +162,7 @@ class AnalysisValidationTests(unittest.TestCase):
             player_pose_weights="player.pt",
             court_weights="court.pt",
         )
-        options = AnalysisOptions(use_tracking_trace_cache=False)
+        options = AnalysisOptions(remove_net_for_court_calibration=False, use_tracking_trace_cache=False)
         fake_capture = MagicMock()
         fake_capture.isOpened.return_value = True
         fake_capture.get.return_value = 0
@@ -179,7 +208,7 @@ class AnalysisValidationTests(unittest.TestCase):
             player_pose_weights="player.pt",
             court_weights="court.pt",
         )
-        options = AnalysisOptions(use_tracking_trace_cache=False)
+        options = AnalysisOptions(remove_net_for_court_calibration=False, use_tracking_trace_cache=False)
         fake_capture = MagicMock()
         fake_capture.isOpened.return_value = True
         fake_capture.get.return_value = 0
@@ -226,7 +255,11 @@ class AnalysisValidationTests(unittest.TestCase):
             player_pose_weights="player.pt",
             court_weights="court.pt",
         )
-        options = AnalysisOptions(use_court_calibration_cache=False, use_tracking_trace_cache=False)
+        options = AnalysisOptions(
+            remove_net_for_court_calibration=False,
+            use_court_calibration_cache=False,
+            use_tracking_trace_cache=False,
+        )
         fake_capture = MagicMock()
         fake_capture.isOpened.return_value = True
         fake_capture.get.side_effect = [2, 30, 1920, 1080]

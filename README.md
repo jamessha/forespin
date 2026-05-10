@@ -1,68 +1,101 @@
 # Forespin
 
-`forespin` is a local batch analyzer for tennis videos recorded from a mostly fixed elevated baseline view. It focuses on one singles player and produces:
+Forespin is a local tennis-video analyzer for mostly fixed elevated-baseline phone footage. It is aimed at one singles player at a time: give it a video, the tracked player side, and handedness, and it writes a machine-readable timeline plus an annotated overlay video.
 
-- shot-in percentages for `serve`, `forehand`, `backhand`, and `volley`
-- lost-point percentages by depth (`baseline`, `net`, `other`) and lateral position (`left`, `right`)
-- a machine-readable JSON timeline and an annotated overlay video
+This project was primarily written by Codex through iterative development sessions. Treat it as an experimental local tool, not a polished product or a validated analytics system.
 
-## What Is Implemented
+## What It Does
 
-- A Python package with a CLI and Streamlit entrypoint.
-- Court calibration, ball tracking, and player tracking modules that require model-backed adapters.
-- The default court calibration path now uses a learned keypoint detector with homography reconstruction, which is more tolerant of clipped back corners than the old line-only heuristic.
-- Event detection for hits and bounces, point assembly, shot classification, quality gating, and metrics aggregation.
-- A `download` command for fetching the default YOLO26 pose weights into the repo.
-- Dev-set annotation scaffolding for building the 20-30 clip tuning set from the plan.
-- Stdlib unit tests for the core shot, point, and metric logic.
+Forespin runs an offline pipeline over a video:
 
-## What Is Not Bundled
+- Calibrates the tennis court into normalized court coordinates.
+- Tracks the tennis ball.
+- Tracks the selected player.
+- Detects hits and bounces.
+- Produces shot-in rates for `serve`, `forehand`, `backhand`, and `volley`.
+- Produces lost-point location rates by depth (`baseline`, `net`, `other`) and lateral side (`left`, `right`).
+- Writes `timeline.json` and, unless disabled, `overlay.mp4`.
 
-- Model weights are not checked into the repo.
-- `TrackNetV2` weights are local/manual only. Place the yastrebksv/TrackNet state-dict checkpoint or a TorchScript-exported model in `models/tracknet/`, or provide a local path with `--tracknet-weights`.
-- The learned court detector is also local/manual only. Place a checkpoint in `models/court/`, or provide a local path with `--court-weights`.
-- The player tracker now targets `YOLO26-pose`, not `YOLOv8-pose`.
-- The player model is local at analysis time. Use `forespin download yolo` to fetch the default `yolo26n-pose.pt` into `models/yolo26/`, or pass a local path with `--player-pose-weights`.
+The expected input is singles footage from a stable baseline view. Heavy zooming, panning, missing court visibility, or poor ball visibility should be rejected or flagged rather than trusted.
 
 ## Install
+
+Clone with submodules so the court-detector training code is available:
+
+```bash
+git clone --recurse-submodules <repo-url>
+cd forespin
+```
+
+If you already cloned without submodules:
+
+```bash
+git submodule update --init --recursive
+```
+
+Install the Python package and vision/UI dependencies:
 
 ```bash
 python3 -m pip install -e ".[all]"
 ```
 
-If you only want the package and tests first:
+For package-only development without OpenCV/PyTorch/Streamlit:
 
 ```bash
 python3 -m pip install -e .
 ```
 
-## CLI Usage
+## Model Weights
 
-Place your TrackNet weights here if you do not want to pass a flag. The app accepts the yastrebksv/TrackNet state-dict checkpoint as well as TorchScript-exported TrackNet models:
+Model weights are not committed to the repo. You need three local artifacts before `forespin analyze` will run.
+
+### TrackNet Ball Weights
+
+TrackNet is manual/local only. Download or create TrackNet weights yourself from the [yastrebksv/TrackNet project](https://github.com/yastrebksv/TrackNet), then place the file here:
 
 ```text
 models/tracknet/tracknetv2.torchscript.pt
 ```
 
-Download the default YOLO26 pose weights here:
+The analyzer accepts either a TorchScript-exported TrackNet model or the compatible yastrebksv/TrackNet state-dict checkpoint. If you use another filename, pass it with `--tracknet-weights`.
+
+### YOLO26 Pose Weights
+
+YOLO26 pose weights are downloaded from Hugging Face:
 
 ```bash
 forespin download yolo
 ```
 
-That downloads the default checkpoint to:
+This saves the default file here:
 
 ```text
 models/yolo26/yolo26n-pose.pt
 ```
 
-Place the learned court detector checkpoint here:
+You can also pass another local pose checkpoint with `--player-pose-weights`.
+
+### Court Detector Weights
+
+The learned court calibrator uses the `tennis_court_detector` submodule, which points at:
+
+```text
+https://github.com/jamessha/TennisCourtDetector
+```
+
+Place a trained checkpoint here:
 
 ```text
 models/court/tennis_court_detector.pt
 ```
 
-If the filename differs, `forespin` will still auto-detect it when `models/court/` contains exactly one checkpoint file.
+Court detector weights trained for this project are available on [Google Drive](https://drive.google.com/file/d/1xLwRbsWz8blh7cFF9eZl3LJZb8p0VrC3/view?usp=sharing).
+
+If `models/court/` contains exactly one `.pt`, `.pth`, or `.bin` file, Forespin will use it automatically. Otherwise pass the checkpoint explicitly with `--court-weights`.
+
+## Run Analysis
+
+Default model locations:
 
 ```bash
 forespin analyze /path/to/match.mp4 \
@@ -71,78 +104,75 @@ forespin analyze /path/to/match.mp4 \
   --output-dir outputs/session-001
 ```
 
-That command works if the TrackNet file is present in `models/tracknet/tracknetv2.torchscript.pt`, the YOLO file is present in `models/yolo26/yolo26n-pose.pt`, and the learned court detector checkpoint is present in `models/court/`.
-
-To use local files instead:
+Explicit model paths:
 
 ```bash
 forespin analyze /path/to/match.mp4 \
   --player-side near \
   --handedness right \
-  --tracknet-weights /models/tracknetv2.torchscript.pt \
-  --player-pose-weights /models/yolo26n-pose.pt \
-  --court-weights /models/tennis_court_detector.pt \
+  --tracknet-weights /path/to/tracknet.pt \
+  --player-pose-weights /path/to/yolo26n-pose.pt \
+  --court-weights /path/to/tennis_court_detector.pt \
   --output-dir outputs/session-001
 ```
 
-For real baseline footage where the net occludes court lines, you can run a first-frame net-removal pass before learned court calibration:
+Useful run flags:
 
-```bash
-forespin analyze /path/to/match.mp4 \
-  --player-side near \
-  --handedness right \
-  --remove-net-for-court-calibration \
-  --output-dir outputs/session-001
-```
+- `--skip-overlay`: write JSON only.
+- `--allow-low-quality`: persist metrics even if the quality gate rejects the clip.
+- `--no-remove-net-for-court-calibration`: disable default OpenAI net removal and calibrate from raw frames.
+- `--no-court-cache`: force court recalibration.
+- `--no-trace-cache`: force ball/player tracking to rerun.
 
-This uses OpenAI image editing with `gpt-image-2`, loads `.env` via `python-dotenv`, and expects `OPENAI_API_KEY` to be available. The API call is opt-in because it sends the first video frame to OpenAI and adds cost/latency.
-
-Court calibration is cached per input filename and calibration mode under:
+Outputs are written under:
 
 ```text
-outputs/<video-stem>/cache/court_calibration/
+<output-dir>/<video-stem>/timeline.json
+<output-dir>/<video-stem>/overlay.mp4
 ```
 
-Use `--no-court-cache` to force recalibration while testing.
+## Court Calibration Net Removal
 
-## Streamlit Usage
+Forespin removes the net from the calibration frame by default before running court calibration. This is the default because the court detector was trained primarily on professional video angles with much less net occlusion than amateur elevated-baseline phone footage.
+
+Default behavior:
+
+```bash
+forespin analyze /path/to/match.mp4 \
+  --player-side near \
+  --handedness right \
+  --output-dir outputs/session-001
+```
+
+Disable net removal for a fully local/raw-frame calibration run:
+
+```bash
+forespin analyze /path/to/match.mp4 \
+  --player-side near \
+  --handedness right \
+  --no-remove-net-for-court-calibration \
+  --output-dir outputs/session-001
+```
+
+Net removal requires `OPENAI_API_KEY` in the environment or a `.env` file. It sends one video frame to OpenAI and adds cost/latency.
+
+## Streamlit UI
 
 ```bash
 streamlit run streamlit_app.py
 ```
 
-The Streamlit UI accepts local model paths and also checks the default repo-local model locations for TrackNet, the learned court detector, and YOLO26.
+The UI uses the same model paths and defaults as the CLI.
 
-## Outputs
+## Court Detector Training
 
-- `timeline.json`: serialized analysis result
-- `overlay.mp4`: annotated playback if OpenCV video writing is available
-
-## Dev Set
-
-See [devset/README.md](/Users/james/playground/forespin/devset/README.md) for the annotation contract used to build and validate the tuning set from the implementation plan.
-
-## Courtside Calibration Data
-
-The original TennisCourtDetector calibration data lives in:
-
-```text
-calib_model_data/tennis_court_detector/
-```
-
-Generate lower-height courtside-style calibration data:
+The court detector is kept as a Git submodule at `tennis_court_detector/`. To train it on generated courtside-style calibration data, first generate the dataset:
 
 ```bash
 python3 scripts/augment_courtside_data.py --overwrite
 ```
 
-Generate one transformed sample into the same output dataset:
-
-```bash
-python3 scripts/augment_courtside_data.py --test --seed 1 --overwrite
-```
-
-By default this writes:
+This writes:
 
 ```text
 calib_model_data/courtside_data/images/
@@ -151,55 +181,53 @@ calib_model_data/courtside_data/data_val.json
 calib_model_data/courtside_data/augmentation_report.json
 ```
 
-The script assumes the original professional baseline camera is roughly 30 ft high, 21 ft behind the nearest baseline, and tilted down at about a 20% grade. For each generated image, it samples a target camera height between 4-6 ft, samples a downward angle between 8-10 degrees, jitters the target Y position by up to 1 ft around a 15 ft behind-baseline distance, keeps the original TennisCourtDetector JSON schema, maps all 14 labeled keypoints through the same homography used for the image warp, zero-pads newly exposed image regions, and writes a 75/25 train/validation split.
-
-Render label overlays for inspection:
+Inspect label overlays:
 
 ```bash
-python3 scripts/visualize_court_labels.py --data-root calib_model_data/courtside_data --max-images 100
+python3 scripts/visualize_court_labels.py \
+  --data-root calib_model_data/courtside_data \
+  --max-images 100
 ```
 
-Run learned court calibration inference on a single image:
-
-```bash
-python3 scripts/infer_court_calibration.py /path/to/baseline-view-frame.jpg \
-  --output-dir outputs/court_calibration_debug
-```
-
-The script auto-discovers the court checkpoint in `models/court/` unless `--weights` is provided. It writes a raw image copy, an overlay image, `summary.json`, and `calibration.json` when the image is accepted.
-
-To test OpenAI net removal on a single frame before calibration:
-
-```bash
-python3 scripts/infer_court_calibration.py /path/to/baseline-view-frame.jpg \
-  --remove-net-with-openai \
-  --output-dir outputs/court_calibration_debug
-```
-
-Train the vendored court detector on the generated courtside data:
+Install the court-detector training dependencies and train:
 
 ```bash
 python3 -m pip install -r tennis_court_detector/requirements.txt
 python3 tennis_court_detector/main.py
 ```
 
-Training writes both inference weights and resumable checkpoints under the experiment directory. For example:
+Training writes experiment files under `tennis_court_detector/exps/`. Copy the best inference checkpoint into Forespin’s model directory when you want to use it:
 
-```text
-tennis_court_detector/exps/default/model_last.pt
-tennis_court_detector/exps/default/model_best.pt
-tennis_court_detector/exps/default/checkpoint_last.pt
-tennis_court_detector/exps/default/checkpoint_best.pt
+```bash
+cp tennis_court_detector/exps/default/model_best.pt models/court/tennis_court_detector.pt
 ```
 
-Resume the latest checkpoint for an experiment:
+Resume training:
 
 ```bash
 python3 tennis_court_detector/main.py --exp_id default --resume
 ```
 
-Or resume a specific checkpoint:
+## Court Calibration Debugging
+
+Run learned court calibration on a single image:
 
 ```bash
-python3 tennis_court_detector/main.py --resume tennis_court_detector/exps/default/checkpoint_last.pt
+python3 scripts/infer_court_calibration.py /path/to/frame.jpg \
+  --output-dir outputs/court_calibration_debug
+```
+
+With OpenAI net removal:
+
+```bash
+python3 scripts/infer_court_calibration.py /path/to/frame.jpg \
+  --remove-net-with-openai \
+  --output-dir outputs/court_calibration_debug
+```
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m compileall src tests
 ```
