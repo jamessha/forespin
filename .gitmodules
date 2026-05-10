@@ -1,0 +1,3 @@
+[submodule "tennis_court_detector"]
+	path = tennis_court_detector
+	url = https://github.com/jamessha/TennisCourtDetector

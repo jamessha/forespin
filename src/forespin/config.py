@@ -21,6 +21,9 @@ class Thresholds:
     bounce_min_separation_frames: int = 14
     bounce_hit_overlap_min_vertical_prominence_px: float = 40.0
     bounce_hit_overlap_max_speed_ratio: float = 2.0
+    bounce_court_projection_min_y_prominence: float = 0.012
+    bounce_court_projection_min_angle_change_deg: float = 24.0
+    bounce_court_projection_min_speed_per_s: float = 0.12
     fallback_bounce_window_frames: int = 10
     hit_suppress_window_frames: int = 5
     dead_ball_gap_frames: int = 75

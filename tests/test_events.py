@@ -88,6 +88,37 @@ class EventTests(unittest.TestCase):
 
         self.assertEqual([bounce.frame_index for bounce in bounces], [5])
 
+    def test_detect_bounces_accepts_court_projection_y_turn_when_pixel_y_is_monotonic(self) -> None:
+        input_config = InputConfig(
+            video_path="match.mp4",
+            tracked_player_side=TrackedPlayerSide.NEAR,
+            handedness=Handedness.RIGHT,
+        )
+        observations = _ball_observations_with_court_y(
+            px_y_values=[100, 104, 108, 112, 116, 120, 124, 128, 132, 136],
+            court_y_values=[0.62, 0.68, 0.73, 0.77, 0.80, 0.815, 0.805, 0.78, 0.74, 0.70],
+        )
+
+        bounces = detect_bounces(observations, [], input_config, Thresholds())
+
+        self.assertEqual([bounce.frame_index for bounce in bounces], [5])
+        self.assertTrue(bounces[0].in_bounds)
+
+    def test_detect_bounces_rejects_monotonic_court_projection_motion(self) -> None:
+        input_config = InputConfig(
+            video_path="match.mp4",
+            tracked_player_side=TrackedPlayerSide.NEAR,
+            handedness=Handedness.RIGHT,
+        )
+        observations = _ball_observations_with_court_y(
+            px_y_values=[100, 104, 108, 112, 116, 120, 124, 128, 132, 136],
+            court_y_values=[0.62, 0.64, 0.66, 0.68, 0.70, 0.72, 0.74, 0.76, 0.78, 0.80],
+        )
+
+        bounces = detect_bounces(observations, [], input_config, Thresholds())
+
+        self.assertEqual(bounces, [])
+
     def test_annotate_shot_types_marks_serve_forehand_and_volley(self) -> None:
         input_config = InputConfig(
             video_path="match.mp4",
@@ -189,6 +220,19 @@ def _ball_observations(y_values: list[float]) -> list[FrameObservation]:
             ball_confidence=0.9,
         )
         for index, y in enumerate(y_values)
+    ]
+
+
+def _ball_observations_with_court_y(px_y_values: list[float], court_y_values: list[float]) -> list[FrameObservation]:
+    return [
+        FrameObservation(
+            frame_index=index,
+            timestamp_s=index / 30.0,
+            ball_px=Point2D(100 + index * 8, px_y),
+            ball_court=Point2D(0.5 + index * 0.01, court_y),
+            ball_confidence=0.9,
+        )
+        for index, (px_y, court_y) in enumerate(zip(px_y_values, court_y_values, strict=True))
     ]
 
 

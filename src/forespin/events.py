@@ -26,6 +26,7 @@ from forespin.geometry import (
     point_in_court,
     point_in_singles_court,
     point_on_opponent_side,
+    scale,
     subtract,
 )
 
@@ -92,11 +93,16 @@ def detect_bounces(
     thresholds: Thresholds,
 ) -> list[BounceEvent]:
     hit_frames = {hit.frame_index for hit in hits}
-    candidates = [
-        candidate
-        for index in range(len(observations))
-        if (candidate := _score_floor_bounce_candidate(index, observations, hit_frames, thresholds)) is not None
-    ]
+    candidates: list[_BounceCandidate] = []
+    for index in range(len(observations)):
+        floor_candidate = _score_floor_bounce_candidate(index, observations, hit_frames, thresholds)
+        if floor_candidate is not None:
+            candidates.append(floor_candidate)
+
+        court_projection_candidate = _score_court_projection_bounce_candidate(index, observations, hit_frames, thresholds)
+        if court_projection_candidate is not None:
+            candidates.append(court_projection_candidate)
+
     bounces = [
         BounceEvent(
             frame_index=candidate.frame_index,
@@ -311,6 +317,102 @@ def _score_floor_bounce_candidate(
     )
 
 
+def _score_court_projection_bounce_candidate(
+    index: int,
+    observations: list[FrameObservation],
+    hit_frames: set[int],
+    thresholds: Thresholds,
+) -> _BounceCandidate | None:
+    current = observations[index]
+    if current.ball_court is None or current.ball_confidence < thresholds.min_ball_confidence:
+        return None
+    if not point_in_court(current.ball_court, tolerance=thresholds.bounce_court_margin):
+        return None
+
+    previous = _nearest_ball_observation(observations, index - 1, -1, -1, thresholds.bounce_floor_window_frames)
+    following = _nearest_ball_observation(observations, index + 1, len(observations), 1, thresholds.bounce_floor_window_frames)
+    if previous is None or following is None or previous.ball_court is None or following.ball_court is None:
+        return None
+
+    left_neighbors = _court_neighbors(observations, index, -1, thresholds.bounce_floor_window_frames)
+    right_neighbors = _court_neighbors(observations, index, 1, thresholds.bounce_floor_window_frames)
+    if not left_neighbors or not right_neighbors:
+        return None
+
+    current_y = current.ball_court.y
+    left_y_values = [observation.ball_court.y for observation in left_neighbors if observation.ball_court is not None]
+    right_y_values = [observation.ball_court.y for observation in right_neighbors if observation.ball_court is not None]
+    if not left_y_values or not right_y_values:
+        return None
+
+    local_max_y = current_y >= max(left_y_values) and current_y >= max(right_y_values)
+    local_min_y = current_y <= min(left_y_values) and current_y <= min(right_y_values)
+    if local_max_y:
+        y_prominence = current_y - max(min(left_y_values), min(right_y_values))
+    elif local_min_y:
+        y_prominence = min(max(left_y_values), max(right_y_values)) - current_y
+    else:
+        y_prominence = 0.0
+
+    v1 = subtract(current.ball_court, previous.ball_court)
+    v2 = subtract(following.ball_court, current.ball_court)
+    previous_dt = max(1e-6, current.timestamp_s - previous.timestamp_s)
+    following_dt = max(1e-6, following.timestamp_s - current.timestamp_s)
+    velocity_in = scale(v1, 1.0 / previous_dt)
+    velocity_out = scale(v2, 1.0 / following_dt)
+    speed1 = magnitude(velocity_in)
+    speed2 = magnitude(velocity_out)
+    if min(speed1, speed2) < thresholds.bounce_court_projection_min_speed_per_s:
+        return None
+
+    angle_change = angle_change_degrees(v1, v2)
+    y_velocity_change = abs(velocity_out.y - velocity_in.y)
+    y_sign_turn = (velocity_in.y >= 0.0 >= velocity_out.y) or (velocity_in.y <= 0.0 <= velocity_out.y)
+    has_projected_floor_turn = (
+        y_sign_turn
+        and y_prominence >= thresholds.bounce_court_projection_min_y_prominence
+        and angle_change >= thresholds.bounce_court_projection_min_angle_change_deg
+    )
+    has_projected_kink = (
+        y_prominence >= thresholds.bounce_court_projection_min_y_prominence * 1.6
+        and angle_change >= thresholds.bounce_court_projection_min_angle_change_deg * 1.4
+        and y_velocity_change >= thresholds.bounce_court_projection_min_speed_per_s
+    )
+    if not has_projected_floor_turn and not has_projected_kink:
+        return None
+
+    in_bounds = point_in_singles_court(current.ball_court, tolerance=0.03)
+    near_hit = any(abs(current.frame_index - hit_frame) <= thresholds.bounce_suppress_frames_after_hit for hit_frame in hit_frames)
+    strong_court_contact = (
+        in_bounds
+        and y_prominence >= thresholds.bounce_court_projection_min_y_prominence * 2.0
+        and angle_change >= thresholds.bounce_court_projection_min_angle_change_deg * 1.25
+    )
+    if near_hit and not strong_court_contact:
+        return None
+
+    score = (
+        y_prominence * 1200.0
+        + angle_change * 0.45
+        + y_velocity_change * 4.0
+        + current.ball_confidence * 8.0
+    )
+    confidence = min(
+        1.0,
+        current.ball_confidence
+        + min(0.25, y_prominence / 0.05 * 0.25)
+        + min(0.2, angle_change / 120.0 * 0.2),
+    )
+    return _BounceCandidate(
+        frame_index=current.frame_index,
+        timestamp_s=current.timestamp_s,
+        ball_court=current.ball_court,
+        in_bounds=in_bounds,
+        confidence=confidence,
+        score=score,
+    )
+
+
 def _select_bounce_candidates(candidates: list[_BounceCandidate], thresholds: Thresholds) -> list[_BounceCandidate]:
     selected: list[_BounceCandidate] = []
     for candidate in sorted(candidates, key=lambda item: item.frame_index):
@@ -348,6 +450,22 @@ def _ball_neighbors(
     index = center_index + step
     while 0 <= index < len(observations) and abs(observations[index].frame_index - center_frame) <= window_frames:
         if observations[index].ball_px is not None:
+            neighbors.append(observations[index])
+        index += step
+    return neighbors
+
+
+def _court_neighbors(
+    observations: list[FrameObservation],
+    center_index: int,
+    step: int,
+    window_frames: int,
+) -> list[FrameObservation]:
+    neighbors: list[FrameObservation] = []
+    center_frame = observations[center_index].frame_index
+    index = center_index + step
+    while 0 <= index < len(observations) and abs(observations[index].frame_index - center_frame) <= window_frames:
+        if observations[index].ball_court is not None:
             neighbors.append(observations[index])
         index += step
     return neighbors
